@@ -22,7 +22,7 @@ DATA_CONFIG = {
         # Market Index
         'SPY',  # S&P 500
     ],
-    'start_date': '2013-01-01',
+    'start_date': '2012-06-01',
     'end_date': '2023-03-10',
     'train_test_split': 0.8,  # 80% train, 20% test
     'window_size': 60,  # 60 days of history
