@@ -543,12 +543,12 @@ class PortfolioAnalytics:
             ('2 Years', self.two_years_mask)
         ]
         
-        # Create figure with subplots
+        # Create figure with subplots - increase vertical spacing
         fig = make_subplots(
             rows=3, cols=2,
             subplot_titles=[title for title, _ in display_periods],
-            vertical_spacing=0.15,
-            horizontal_spacing=0.10
+            vertical_spacing=0.2,  # Increased from 0.15
+            horizontal_spacing=0.12  # Increased from 0.10
         )
 
         # Add main title
@@ -561,7 +561,7 @@ class PortfolioAnalytics:
                 'yanchor': 'top',
                 'font': {'size': 24}
             },
-            height=800,  # Taller for 6 subplots
+            height=900,  # Increased from 800 for more spacing
             width=self.figsize[0],
             showlegend=True
         )
@@ -641,59 +641,54 @@ class PortfolioAnalytics:
         # Calculate total return for the period
         total_return = period_data['normalized_value'].iloc[-1] / period_data['normalized_value'].iloc[0] - 1
         
-        # Add annotations
+        # Create text annotations as a single annotation block in the corner
+        annotation_text = []
+        
+        # Add Strategy return
+        annotation_text.append(f"Strategy: {total_return:.2%}")
+        
+        # Add Benchmark and Alpha if available
         if self.benchmark_returns is not None and len(benchmark_period) > 0:
             benchmark_return = benchmark_normalized.iloc[-1] / benchmark_normalized.iloc[0] - 1
+            annotation_text.append(f"Benchmark: {benchmark_return:.2%}")
             
-            # Strategy return
-            fig.add_annotation(
-                x=0.02, y=0.05,
-                text=f'Strategy: {total_return:.2%}',
-                showarrow=False,
-                font=dict(size=12, color='#0066CC'),
-                xref="paper", yref="paper",
-                xanchor='left',
-                row=row, col=col
-            )
-            
-            # Benchmark return
-            fig.add_annotation(
-                x=0.02, y=0.10,
-                text=f'Benchmark: {benchmark_return:.2%}',
-                showarrow=False,
-                font=dict(size=12, color='#999999'),
-                xref="paper", yref="paper",
-                xanchor='left',
-                row=row, col=col
-            )
-            
-            # Alpha
-            alpha_color = 'green' if total_return > benchmark_return else 'red'
-            fig.add_annotation(
-                x=0.02, y=0.15,
-                text=f'Alpha: {total_return - benchmark_return:.2%}',
-                showarrow=False,
-                font=dict(size=12, color=alpha_color),
-                xref="paper", yref="paper",
-                xanchor='left',
-                row=row, col=col
-            )
-        else:
-            # Just strategy return
-            fig.add_annotation(
-                x=0.02, y=0.05,
-                text=f'Return: {total_return:.2%}',
-                showarrow=False,
-                font=dict(size=12, color='#0066CC'),
-                xref="paper", yref="paper",
-                xanchor='left',
-                row=row, col=col
-            )
+            # Add Alpha
+            alpha = total_return - benchmark_return
+            alpha_color = 'green' if alpha > 0 else 'red'
+            annotation_text.append(f"Alpha: {alpha:.2%}")
         
-        # Format axes
+        # Add the consolidated annotation
+        fig.add_annotation(
+            x=0.02,
+            y=0.02,
+            xref="paper",
+            yref="paper",
+            text="<br>".join(annotation_text),
+            align="left",
+            showarrow=False,
+            font=dict(size=10),
+            bgcolor="rgba(255, 255, 255, 0.8)",
+            bordercolor="#c7c7c7",
+            borderwidth=1,
+            borderpad=4,
+            xanchor="left",
+            yanchor="bottom",
+            row=row,
+            col=col
+        )
+        
+        # Format axes - explicitly set the x-axis range
+        fig.update_xaxes(
+            title_text='Date',
+            range=[period_data.index[0], period_data.index[-1]],  # Force x-axis range to match the data
+            row=row, 
+            col=col
+        )
+        
         fig.update_yaxes(
             title_text='Value (%)',
-            row=row, col=col
+            row=row, 
+            col=col
         )
     
     def create_return_distribution_dashboard(self, save_path=None, show_plot=True, show=True):

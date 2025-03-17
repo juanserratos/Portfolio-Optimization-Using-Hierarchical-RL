@@ -277,13 +277,13 @@ class BacktestVisualizer:
             )
             return
         
-        # Format month names and handle potentially missing data
+        # Format month names
         month_names = {i: calendar.month_abbr[i] for i in range(1, 13)}
         formatted_data = self.monthly_returns.rename(columns=month_names)
         
         # Convert to format suitable for Plotly heatmap
         z_data = formatted_data.values * 100  # Convert to percentage
-        x_data = [month_names[i] for i in formatted_data.columns]
+        x_data = formatted_data.columns.tolist()  # Use column names directly
         y_data = formatted_data.index.get_level_values(0)  # Years
         
         # Create custom text for hover
@@ -303,8 +303,8 @@ class BacktestVisualizer:
                     title="Return (%)",
                     thickness=10,
                     len=0.6,
-                    y=0.8,
-                    x=1.1
+                    y=0.25,  # Position colorbar in the middle of the bottom row
+                    x=1.02    # Move colorbar slightly to the right
                 )
             ),
             row=row, col=col
@@ -544,7 +544,9 @@ class BacktestVisualizer:
                 colorbar=dict(
                     title="Allocation (%)",
                     thickness=10,
-                    len=0.6
+                    len=0.6,
+                    y=0.25,  # Adjust position to avoid overlap
+                    x=1.02
                 )
             ),
             row=row, col=col
