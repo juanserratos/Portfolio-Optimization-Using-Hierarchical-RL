@@ -1,43 +1,45 @@
 """
 Portfolio analytics module for performance analysis across multiple time horizons.
 Designed for portfolio managers to evaluate model performance in current market conditions.
+Enhanced with Plotly interactive visualizations.
 """
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-import matplotlib.dates as mdates
-import seaborn as sns
-from matplotlib.ticker import FuncFormatter, PercentFormatter
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+import plotly.io as pio
 from datetime import datetime, timedelta
 import logging
 from scipy import stats
+import os
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Set default plotly template
+pio.templates.default = "plotly_white"
+
 class PortfolioAnalytics:
     """Class for portfolio manager-focused performance analytics and visualizations."""
     
-    def __init__(self, results_df, benchmark_returns=None, figsize=(12, 8), dpi=100, style='seaborn-v0_8-whitegrid'):
+    def __init__(self, results_df, benchmark_returns=None, figsize=(900, 600), theme="plotly_white"):
         """
         Initialize the portfolio analytics.
         
         Args:
             results_df (pd.DataFrame): DataFrame with backtest results
             benchmark_returns (pd.Series, optional): Series with benchmark returns
-            figsize (tuple): Figure size
-            dpi (int): DPI for the figures
-            style (str): Matplotlib style
+            figsize (tuple): Figure size (width, height) in pixels
+            theme (str): Plotly theme/template
         """
         self.results_df = results_df
         self.benchmark_returns = benchmark_returns
         self.figsize = figsize
-        self.dpi = dpi
-        self.style = style
+        self.theme = theme
         
-        # Apply style
-        plt.style.use(self.style)
+        # Set the theme
+        pio.templates.default = self.theme
         
         # Align benchmark with results if provided
         if self.benchmark_returns is not None:
@@ -184,52 +186,71 @@ class PortfolioAnalytics:
         
         return period_metrics
     
-    def create_period_performance_dashboard(self, save_path=None, show_plot=True):
+    def create_period_performance_dashboard(self, save_path=None, show_plot=True, show=True):
         """
         Create a performance dashboard showing key metrics across time periods.
         
         Args:
             save_path (str, optional): Path to save the figure
-            show_plot (bool): Whether to display the plot
+            show_plot (bool): Whether to display the plot (deprecated, use show)
+            show (bool): Whether to display the plot
             
         Returns:
-            matplotlib.figure.Figure: The figure
+            plotly.graph_objects.Figure: The figure
         """
-        # FIXED: Use constrained_layout instead of tight_layout
-        fig = plt.figure(figsize=self.figsize, dpi=self.dpi, constrained_layout=True)
-        gs = gridspec.GridSpec(2, 2, figure=fig)
-        
-        # Title the figure
-        fig.suptitle('Performance Analysis Across Time Horizons', fontsize=16, y=0.98)
+        # Create figure with subplots
+        fig = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=(
+                'Performance by Time Horizon',
+                'Risk-Adjusted Performance',
+                'Relative Performance vs Benchmark',
+                'Maximum Drawdown by Time Horizon'
+            ),
+            vertical_spacing=0.15,
+            horizontal_spacing=0.10
+        )
+
+        # Add main title
+        fig.update_layout(
+            title={
+                'text': 'Performance Analysis Across Time Horizons',
+                'y': 0.98,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+                'font': {'size': 24}
+            },
+            height=self.figsize[1],
+            width=self.figsize[0],
+            showlegend=True
+        )
         
         # 1. Multi-period performance chart
-        ax_perf = fig.add_subplot(gs[0, 0])
-        self._plot_period_performance(ax_perf)
+        self._plot_period_performance(fig, row=1, col=1)
         
         # 2. Risk-adjusted metrics
-        ax_risk = fig.add_subplot(gs[0, 1])
-        self._plot_risk_metrics(ax_risk)
+        self._plot_risk_metrics(fig, row=1, col=2)
         
         # 3. Relative performance vs benchmark
-        ax_rel = fig.add_subplot(gs[1, 0])
-        self._plot_relative_performance(ax_rel)
+        self._plot_relative_performance(fig, row=2, col=1)
         
         # 4. Drawdown comparison
-        ax_dd = fig.add_subplot(gs[1, 1])
-        self._plot_drawdown_comparison(ax_dd)
+        self._plot_drawdown_comparison(fig, row=2, col=2)
         
         # Save if path provided
         if save_path:
-            fig.savefig(save_path, bbox_inches='tight')
+            fig.write_image(save_path)
+            fig.write_html(save_path.replace('.png', '.html'))
             logger.info(f"Period performance dashboard saved to {save_path}")
         
-        # Show plot if requested
-        if show_plot:
-            plt.show()
+        # Show plot if requested (support both legacy show_plot and new show parameter)
+        if show_plot or show:
+            fig.show()
         
         return fig
     
-    def _plot_period_performance(self, ax):
+    def _plot_period_performance(self, fig, row=1, col=1):
         """Plot performance metrics across different time periods."""
         periods = []
         returns = []
@@ -249,34 +270,60 @@ class PortfolioAnalytics:
         
         # Sort by period length (custom order)
         period_order = ['1W', '2W', '1M', '6M', '1Y', '2Y', 'All']
-        df['Period'] = pd.Categorical(df['Period'], categories=period_order, ordered=True)
-        df = df.sort_values('Period')
+        df['Period_Sorted'] = pd.Categorical(df['Period'], categories=period_order, ordered=True)
+        df = df.sort_values('Period_Sorted')
         
         # Plot returns as bars
-        df.plot(x='Period', y='Return (%)', kind='bar', ax=ax, color='#0066CC', width=0.4, position=1, legend=True)
+        fig.add_trace(
+            go.Bar(
+                x=df['Period'],
+                y=df['Return (%)'],
+                name='Return (%)',
+                marker_color='#0066CC',
+                text=df['Return (%)'].apply(lambda x: f'{x:.1f}%'),
+                textposition='auto'
+            ),
+            row=row, col=col
+        )
         
-        # Create twin axis for volatility
-        ax2 = ax.twinx()
-        df.plot(x='Period', y='Volatility (%)', kind='bar', ax=ax2, color='#CC0000', width=0.4, position=0, alpha=0.7, legend=True)
-        
-        # Format axes
-        ax.set_title('Performance by Time Horizon', fontsize=12)
-        ax.set_ylabel('Return (%)')
-        ax2.set_ylabel('Volatility (%)')
+        # Create second y-axis for volatility
+        fig.add_trace(
+            go.Bar(
+                x=df['Period'],
+                y=df['Volatility (%)'],
+                name='Volatility (%)',
+                marker_color='#CC0000',
+                opacity=0.7,
+                yaxis='y2',
+                text=df['Volatility (%)'].apply(lambda x: f'{x:.1f}%'),
+                textposition='auto'
+            ),
+            row=row, col=col
+        )
         
         # Add horizontal line at y=0 for returns
-        ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+        fig.add_shape(
+            type="line",
+            x0=0, y0=0, x1=1, y1=0,
+            xref="paper", yref="y1",
+            line=dict(color="black", width=1),
+            row=row, col=col
+        )
         
-        # Combine legends
-        lines1, labels1 = ax.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
-        ax2.get_legend().remove()
+        # Format axes
+        fig.update_yaxes(
+            title_text='Return (%)',
+            row=row, col=col
+        )
         
-        # Rotate x-axis labels for better readability
-        plt.setp(ax.get_xticklabels(), rotation=0)
+        fig.update_yaxes(
+            title_text='Volatility (%)',
+            overlaying='y',
+            side='right',
+            row=row, col=col
+        )
     
-    def _plot_risk_metrics(self, ax):
+    def _plot_risk_metrics(self, fig, row=1, col=1):
         """Plot risk-adjusted metrics across different time periods."""
         periods = []
         sharpes = []
@@ -296,39 +343,71 @@ class PortfolioAnalytics:
         
         # Sort by period length (custom order)
         period_order = ['1W', '2W', '1M', '6M', '1Y', '2Y', 'All']
-        df['Period'] = pd.Categorical(df['Period'], categories=period_order, ordered=True)
-        df = df.sort_values('Period')
+        df['Period_Sorted'] = pd.Categorical(df['Period'], categories=period_order, ordered=True)
+        df = df.sort_values('Period_Sorted')
         
         # Plot Sharpe Ratio as bars
-        df.plot(x='Period', y='Sharpe Ratio', kind='bar', ax=ax, color='#0066CC', width=0.4, position=1, legend=True)
+        fig.add_trace(
+            go.Bar(
+                x=df['Period'],
+                y=df['Sharpe Ratio'],
+                name='Sharpe Ratio',
+                marker_color='#0066CC',
+                text=df['Sharpe Ratio'].apply(lambda x: f'{x:.2f}'),
+                textposition='auto'
+            ),
+            row=row, col=col
+        )
         
-        # Create twin axis for win rate
-        ax2 = ax.twinx()
-        df.plot(x='Period', y='Win Rate (%)', kind='bar', ax=ax2, color='green', width=0.4, position=0, alpha=0.7, legend=True)
-        
-        # Format axes
-        ax.set_title('Risk-Adjusted Performance by Time Horizon', fontsize=12)
-        ax.set_ylabel('Sharpe Ratio')
-        ax2.set_ylabel('Win Rate (%)')
+        # Create second y-axis for win rate
+        fig.add_trace(
+            go.Bar(
+                x=df['Period'],
+                y=df['Win Rate (%)'],
+                name='Win Rate (%)',
+                marker_color='green',
+                opacity=0.7,
+                yaxis='y2',
+                text=df['Win Rate (%)'].apply(lambda x: f'{x:.1f}%'),
+                textposition='auto'
+            ),
+            row=row, col=col
+        )
         
         # Add horizontal line at y=0 for Sharpe
-        ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+        fig.add_shape(
+            type="line",
+            x0=0, y0=0, x1=1, y1=0,
+            xref="paper", yref="y1",
+            line=dict(color="black", width=1),
+            row=row, col=col
+        )
         
-        # Combine legends
-        lines1, labels1 = ax.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
-        ax2.get_legend().remove()
+        # Format axes
+        fig.update_yaxes(
+            title_text='Sharpe Ratio',
+            row=row, col=col
+        )
         
-        # Rotate x-axis labels for better readability
-        plt.setp(ax.get_xticklabels(), rotation=0)
+        fig.update_yaxes(
+            title_text='Win Rate (%)',
+            overlaying='y',
+            side='right',
+            row=row, col=col
+        )
     
-    def _plot_relative_performance(self, ax):
+    def _plot_relative_performance(self, fig, row=1, col=1):
         """Plot relative performance vs benchmark across different time periods."""
         # Skip if no benchmark is available
         if self.benchmark_returns is None:
-            ax.text(0.5, 0.5, 'No benchmark data available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Relative Performance vs Benchmark', fontsize=12)
+            fig.add_annotation(
+                x=0.5, y=0.5,
+                text='No benchmark data available',
+                showarrow=False,
+                font=dict(size=15),
+                xref="paper", yref="paper",
+                row=row, col=col
+            )
             return
             
         periods = []
@@ -349,34 +428,60 @@ class PortfolioAnalytics:
         
         # Sort by period length (custom order)
         period_order = ['1W', '2W', '1M', '6M', '1Y', '2Y', 'All']
-        df['Period'] = pd.Categorical(df['Period'], categories=period_order, ordered=True)
-        df = df.sort_values('Period')
+        df['Period_Sorted'] = pd.Categorical(df['Period'], categories=period_order, ordered=True)
+        df = df.sort_values('Period_Sorted')
         
         # Plot excess return as bars
-        df.plot(x='Period', y='Excess Return (%)', kind='bar', ax=ax, color='#0066CC', width=0.4, position=1, legend=True)
+        fig.add_trace(
+            go.Bar(
+                x=df['Period'],
+                y=df['Excess Return (%)'],
+                name='Excess Return (%)',
+                marker_color='#0066CC',
+                text=df['Excess Return (%)'].apply(lambda x: f'{x:.1f}%'),
+                textposition='auto'
+            ),
+            row=row, col=col
+        )
         
-        # Create twin axis for alpha
-        ax2 = ax.twinx()
-        df.plot(x='Period', y='Alpha (%)', kind='bar', ax=ax2, color='purple', width=0.4, position=0, alpha=0.7, legend=True)
-        
-        # Format axes
-        ax.set_title('Relative Performance vs Benchmark', fontsize=12)
-        ax.set_ylabel('Excess Return (%)')
-        ax2.set_ylabel('Alpha (%)')
+        # Create second y-axis for alpha
+        fig.add_trace(
+            go.Bar(
+                x=df['Period'],
+                y=df['Alpha (%)'],
+                name='Alpha (%)',
+                marker_color='purple',
+                opacity=0.7,
+                yaxis='y2',
+                text=df['Alpha (%)'].apply(lambda x: f'{x:.1f}%'),
+                textposition='auto'
+            ),
+            row=row, col=col
+        )
         
         # Add horizontal line at y=0
-        ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+        fig.add_shape(
+            type="line",
+            x0=0, y0=0, x1=1, y1=0,
+            xref="paper", yref="y1",
+            line=dict(color="black", width=1),
+            row=row, col=col
+        )
         
-        # Combine legends
-        lines1, labels1 = ax.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
-        ax2.get_legend().remove()
+        # Format axes
+        fig.update_yaxes(
+            title_text='Excess Return (%)',
+            row=row, col=col
+        )
         
-        # Rotate x-axis labels for better readability
-        plt.setp(ax.get_xticklabels(), rotation=0)
+        fig.update_yaxes(
+            title_text='Alpha (%)',
+            overlaying='y',
+            side='right',
+            row=row, col=col
+        )
     
-    def _plot_drawdown_comparison(self, ax):
+    def _plot_drawdown_comparison(self, fig, row=1, col=1):
         """Plot maximum drawdown across different time periods."""
         periods = []
         max_drawdowns = []
@@ -393,44 +498,41 @@ class PortfolioAnalytics:
         
         # Sort by period length (custom order)
         period_order = ['1W', '2W', '1M', '6M', '1Y', '2Y', 'All']
-        df['Period'] = pd.Categorical(df['Period'], categories=period_order, ordered=True)
-        df = df.sort_values('Period')
+        df['Period_Sorted'] = pd.Categorical(df['Period'], categories=period_order, ordered=True)
+        df = df.sort_values('Period_Sorted')
         
         # Plot max drawdown as bars
-        df.plot(x='Period', y='Max Drawdown (%)', kind='bar', ax=ax, color='#CC0000', legend=False)
+        fig.add_trace(
+            go.Bar(
+                x=df['Period'],
+                y=df['Max Drawdown (%)'],
+                name='Max Drawdown (%)',
+                marker_color='#CC0000',
+                text=df['Max Drawdown (%)'].apply(lambda x: f'{x:.1f}%'),
+                textposition='auto'
+            ),
+            row=row, col=col
+        )
         
         # Format axes
-        ax.set_title('Maximum Drawdown by Time Horizon', fontsize=12)
-        ax.set_ylabel('Max Drawdown (%)')
-        
-        # Invert y-axis to show drawdowns as negative values
-        ax.invert_yaxis()
-        
-        # Add value labels on bars
-        for i, v in enumerate(df['Max Drawdown (%)']):
-            ax.text(i, v - 0.5, f'{v:.1f}%', ha='center', fontweight='bold', color='white')
-        
-        # Rotate x-axis labels for better readability
-        plt.setp(ax.get_xticklabels(), rotation=0)
+        fig.update_yaxes(
+            title_text='Max Drawdown (%)',
+            autorange="reversed",  # Invert y-axis to show drawdowns as negative
+            row=row, col=col
+        )
     
-    def create_pnl_time_horizon_dashboard(self, save_path=None, show_plot=True):
+    def create_pnl_time_horizon_dashboard(self, save_path=None, show_plot=True, show=True):
         """
         Create a PnL dashboard showing performance over different time horizons.
         
         Args:
             save_path (str, optional): Path to save the figure
-            show_plot (bool): Whether to display the plot
+            show_plot (bool): Whether to display the plot (deprecated, use show)
+            show (bool): Whether to display the plot
             
         Returns:
-            matplotlib.figure.Figure: The figure
+            plotly.graph_objects.Figure: The figure
         """
-        # FIXED: Use constrained_layout instead of tight_layout
-        fig = plt.figure(figsize=(15, 12), dpi=self.dpi, constrained_layout=True)
-        gs = gridspec.GridSpec(3, 2, figure=fig)
-        
-        # Title the figure
-        fig.suptitle('PnL Analysis Across Time Horizons', fontsize=16, y=0.98)
-        
         # Define the periods to display
         display_periods = [
             ('1 Week', self.week_mask),
@@ -441,32 +543,63 @@ class PortfolioAnalytics:
             ('2 Years', self.two_years_mask)
         ]
         
+        # Create figure with subplots
+        fig = make_subplots(
+            rows=3, cols=2,
+            subplot_titles=[title for title, _ in display_periods],
+            vertical_spacing=0.15,
+            horizontal_spacing=0.10
+        )
+
+        # Add main title
+        fig.update_layout(
+            title={
+                'text': 'PnL Analysis Across Time Horizons',
+                'y': 0.98,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+                'font': {'size': 24}
+            },
+            height=800,  # Taller for 6 subplots
+            width=self.figsize[0],
+            showlegend=True
+        )
+        
         # Create a subplot for each time period
         for i, (title, mask) in enumerate(display_periods):
             row, col = divmod(i, 2)
-            ax = fig.add_subplot(gs[row, col])
-            self._plot_period_pnl(ax, mask, title)
+            row += 1  # 1-based indexing
+            col += 1  # 1-based indexing
+            self._plot_period_pnl(fig, mask, title, row, col)
         
         # Save if path provided
         if save_path:
-            fig.savefig(save_path, bbox_inches='tight')
+            fig.write_image(save_path)
+            fig.write_html(save_path.replace('.png', '.html'))
             logger.info(f"PnL time horizon dashboard saved to {save_path}")
         
-        # Show plot if requested
-        if show_plot:
-            plt.show()
+        # Show plot if requested (support both legacy show_plot and new show parameter)
+        if show_plot or show:
+            fig.show()
         
         return fig
     
-    def _plot_period_pnl(self, ax, mask, title):
+    def _plot_period_pnl(self, fig, mask, title, row, col):
         """Plot PnL for a specific time period."""
         # Get data for the specified period
         period_data = self.results_df[mask].copy()
         
         # Skip if insufficient data
         if len(period_data) <= 1:
-            ax.text(0.5, 0.5, f'Insufficient data for {title}', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(title, fontsize=12)
+            fig.add_annotation(
+                x=0.5, y=0.5,
+                text=f'Insufficient data for {title}',
+                showarrow=False,
+                font=dict(size=15),
+                xref=f"x{row}{col}", yref=f"y{row}{col}",
+                row=row, col=col
+            )
             return
         
         # Normalize to start at 100%
@@ -474,7 +607,17 @@ class PortfolioAnalytics:
         period_data['normalized_value'] = period_data['portfolio_value'] / start_value * 100
         
         # Plot portfolio value
-        period_data['normalized_value'].plot(ax=ax, color='#0066CC', linewidth=2)
+        fig.add_trace(
+            go.Scatter(
+                x=period_data.index,
+                y=period_data['normalized_value'],
+                mode='lines',
+                name='Strategy',
+                line=dict(color='#0066CC', width=2),
+                showlegend=(row == 1 and col == 1)  # Only show legend for first subplot
+            ),
+            row=row, col=col
+        )
         
         # Add benchmark if available
         if self.benchmark_returns is not None:
@@ -482,146 +625,237 @@ class PortfolioAnalytics:
             if len(benchmark_period) > 0:
                 benchmark_cumulative = (1 + benchmark_period.fillna(0)).cumprod()
                 benchmark_normalized = benchmark_cumulative / benchmark_cumulative.iloc[0] * 100
-                benchmark_normalized.plot(ax=ax, color='#999999', linewidth=1.5, linestyle='--', label='Benchmark')
+                
+                fig.add_trace(
+                    go.Scatter(
+                        x=benchmark_normalized.index,
+                        y=benchmark_normalized,
+                        mode='lines',
+                        name='Benchmark',
+                        line=dict(color='#999999', width=1.5, dash='dash'),
+                        showlegend=(row == 1 and col == 1)  # Only show legend for first subplot
+                    ),
+                    row=row, col=col
+                )
         
         # Calculate total return for the period
         total_return = period_data['normalized_value'].iloc[-1] / period_data['normalized_value'].iloc[0] - 1
         
-        # Add simple annotations (no arrows)
+        # Add annotations
         if self.benchmark_returns is not None and len(benchmark_period) > 0:
             benchmark_return = benchmark_normalized.iloc[-1] / benchmark_normalized.iloc[0] - 1
-            ax.annotate(f'Strategy: {total_return:.2%}', 
-                       xy=(0.02, 0.05), xycoords='axes fraction', 
-                       fontweight='bold', color='#0066CC')
-            ax.annotate(f'Benchmark: {benchmark_return:.2%}', 
-                       xy=(0.02, 0.10), xycoords='axes fraction', 
-                       fontweight='bold', color='#999999')
-            ax.annotate(f'Alpha: {total_return - benchmark_return:.2%}', 
-                       xy=(0.02, 0.15), xycoords='axes fraction', 
-                       fontweight='bold', color='green' if total_return > benchmark_return else 'red')
+            
+            # Strategy return
+            fig.add_annotation(
+                x=0.02, y=0.05,
+                text=f'Strategy: {total_return:.2%}',
+                showarrow=False,
+                font=dict(size=12, color='#0066CC'),
+                xref="paper", yref="paper",
+                xanchor='left',
+                row=row, col=col
+            )
+            
+            # Benchmark return
+            fig.add_annotation(
+                x=0.02, y=0.10,
+                text=f'Benchmark: {benchmark_return:.2%}',
+                showarrow=False,
+                font=dict(size=12, color='#999999'),
+                xref="paper", yref="paper",
+                xanchor='left',
+                row=row, col=col
+            )
+            
+            # Alpha
+            alpha_color = 'green' if total_return > benchmark_return else 'red'
+            fig.add_annotation(
+                x=0.02, y=0.15,
+                text=f'Alpha: {total_return - benchmark_return:.2%}',
+                showarrow=False,
+                font=dict(size=12, color=alpha_color),
+                xref="paper", yref="paper",
+                xanchor='left',
+                row=row, col=col
+            )
         else:
-            ax.annotate(f'Return: {total_return:.2%}', 
-                       xy=(0.02, 0.05), xycoords='axes fraction', 
-                       fontweight='bold', color='#0066CC')
+            # Just strategy return
+            fig.add_annotation(
+                x=0.02, y=0.05,
+                text=f'Return: {total_return:.2%}',
+                showarrow=False,
+                font=dict(size=12, color='#0066CC'),
+                xref="paper", yref="paper",
+                xanchor='left',
+                row=row, col=col
+            )
         
         # Format axes
-        ax.set_title(title, fontsize=12)
-        ax.set_ylabel('Value (%)')
-        
-        # Format x-axis with dates
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-        if len(period_data) > 180:
-            ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
-        elif len(period_data) > 60:
-            ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
-        elif len(period_data) > 20:
-            ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
-        else:
-            ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
-        
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
-        
-        # Add grid
-        ax.grid(True, alpha=0.3)
-        
-        # Add legend
-        ax.legend(loc='upper left')
+        fig.update_yaxes(
+            title_text='Value (%)',
+            row=row, col=col
+        )
     
-    def create_return_distribution_dashboard(self, save_path=None, show_plot=True):
+    def create_return_distribution_dashboard(self, save_path=None, show_plot=True, show=True):
         """
         Create a dashboard showing return distributions for different time periods.
         
         Args:
             save_path (str, optional): Path to save the figure
-            show_plot (bool): Whether to display the plot
+            show_plot (bool): Whether to display the plot (deprecated, use show)
+            show (bool): Whether to display the plot
             
         Returns:
-            matplotlib.figure.Figure: The figure
+            plotly.graph_objects.Figure: The figure
         """
         # Define periods to analyze
         periods = [
+            ('Daily', 1, None),
             ('Weekly', 5, 'W'),
             ('Monthly', 21, 'M'),
             ('Quarterly', 63, 'Q')
         ]
         
-        # FIXED: Use constrained_layout instead of tight_layout
-        fig = plt.figure(figsize=self.figsize, dpi=self.dpi, constrained_layout=True)
-        gs = gridspec.GridSpec(2, 2, figure=fig)
+        # Create figure with subplots
+        fig = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=[f'{title} Return Distribution' for title, _, _ in periods],
+            vertical_spacing=0.15,
+            horizontal_spacing=0.10
+        )
+
+        # Add main title
+        fig.update_layout(
+            title={
+                'text': 'Return Distribution Analysis',
+                'y': 0.98,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+                'font': {'size': 24}
+            },
+            height=self.figsize[1],
+            width=self.figsize[0],
+            showlegend=True
+        )
         
-        # Title the figure
-        fig.suptitle('Return Distribution Analysis', fontsize=16, y=0.98)
-        
-        # 1. Daily returns distribution
-        ax_daily = fig.add_subplot(gs[0, 0])
-        self._plot_return_distribution(ax_daily, 'Daily')
-        
-        # 2. Weekly returns distribution
-        ax_weekly = fig.add_subplot(gs[0, 1])
-        self._plot_rolling_return_distribution(ax_weekly, *periods[0])
-        
-        # 3. Monthly returns distribution
-        ax_monthly = fig.add_subplot(gs[1, 0])
-        self._plot_rolling_return_distribution(ax_monthly, *periods[1])
-        
-        # 4. Quarterly returns distribution
-        ax_quarterly = fig.add_subplot(gs[1, 1])
-        self._plot_rolling_return_distribution(ax_quarterly, *periods[2])
+        # Create a subplot for each period
+        for i, (title, window, freq) in enumerate(periods):
+            row, col = divmod(i, 2)
+            row += 1  # 1-based indexing
+            col += 1  # 1-based indexing
+            
+            if i == 0:  # Daily returns
+                self._plot_return_distribution(fig, title, row, col)
+            else:
+                self._plot_rolling_return_distribution(fig, title, window, freq, row, col)
         
         # Save if path provided
         if save_path:
-            fig.savefig(save_path, bbox_inches='tight')
+            fig.write_image(save_path)
+            fig.write_html(save_path.replace('.png', '.html'))
             logger.info(f"Return distribution dashboard saved to {save_path}")
         
-        # Show plot if requested
-        if show_plot:
-            plt.show()
+        # Show plot if requested (support both legacy show_plot and new show parameter)
+        if show_plot or show:
+            fig.show()
         
         return fig
     
-    def _plot_return_distribution(self, ax, period_type='Daily'):
+    def _plot_return_distribution(self, fig, period_type='Daily', row=1, col=1):
         """Plot return distribution for daily returns."""
-        returns = self.results_df['return'] * 100
+        returns = self.results_df['return'] * 100  # Convert to percentage
         
-        # Plot histogram with KDE
-        sns.histplot(returns, ax=ax, bins=30, kde=True, color='#0066CC', stat='density', alpha=0.7)
+        # Calculate statistics
+        mean = returns.mean()
+        std = returns.std()
+        skew = stats.skew(returns)
+        kurt = stats.kurtosis(returns)
+        min_ret = returns.min()
+        max_ret = returns.max()
+        
+        # Add histogram
+        fig.add_trace(
+            go.Histogram(
+                x=returns,
+                name='Returns',
+                nbinsx=30,
+                opacity=0.7,
+                marker_color='#0066CC',
+                histnorm='probability density'
+            ),
+            row=row, col=col
+        )
         
         # Add normal distribution for comparison
         x = np.linspace(returns.min(), returns.max(), 100)
-        mean = returns.mean()
-        std = returns.std()
         y = stats.norm.pdf(x, mean, std)
-        ax.plot(x, y, 'r--', linewidth=1.5, label='Normal Dist.')
         
-        # Add summary statistics
-        stats_text = (
-            f"Mean: {mean:.2f}%\n"
-            f"Std Dev: {std:.2f}%\n"
-            f"Skew: {stats.skew(returns):.2f}\n"
-            f"Kurtosis: {stats.kurtosis(returns):.2f}\n"
-            f"Min: {returns.min():.2f}%\n"
-            f"Max: {returns.max():.2f}%"
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=y,
+                mode='lines',
+                name='Normal Dist.',
+                line=dict(color='red', width=2, dash='dash')
+            ),
+            row=row, col=col
         )
         
-        props = dict(boxstyle='round', facecolor='white', alpha=0.7)
-        ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, fontsize=9,
-               verticalalignment='top', bbox=props)
-        
-        # Format axes
-        ax.set_title(f'{period_type} Return Distribution', fontsize=12)
-        ax.set_xlabel(f'{period_type} Return (%)')
-        ax.set_ylabel('Density')
-        
-        # Add legend
-        ax.legend()
-        
         # Add vertical line at mean
-        ax.axvline(mean, color='red', linestyle='-', linewidth=1, label='Mean')
+        fig.add_shape(
+            type="line",
+            x0=mean, y0=0,
+            x1=mean, y1=max(stats.norm.pdf(mean, mean, std) * 1.1, 0.1),
+            line=dict(color="red", width=2),
+            row=row, col=col
+        )
         
         # Add vertical line at zero
-        ax.axvline(0, color='black', linestyle='--', linewidth=1)
+        fig.add_shape(
+            type="line",
+            x0=0, y0=0,
+            x1=0, y1=max(stats.norm.pdf(0, mean, std) * 1.1, 0.1),
+            line=dict(color="black", width=1, dash="dash"),
+            row=row, col=col
+        )
+        
+        # Add statistics annotation
+        stats_text = (
+            f"Mean: {mean:.2f}%<br>"
+            f"Std Dev: {std:.2f}%<br>"
+            f"Skew: {skew:.2f}<br>"
+            f"Kurtosis: {kurt:.2f}<br>"
+            f"Min: {min_ret:.2f}%<br>"
+            f"Max: {max_ret:.2f}%"
+        )
+        
+        fig.add_annotation(
+            x=0.05, y=0.95,
+            text=stats_text,
+            showarrow=False,
+            font=dict(size=10),
+            bgcolor="white",
+            bordercolor="#c7c7c7",
+            borderwidth=1,
+            borderpad=4,
+            xref="paper", yref="paper",
+            xanchor='left', yanchor='top',
+            row=row, col=col
+        )
+        
+        # Format axes
+        fig.update_xaxes(
+            title_text=f'{period_type} Return (%)',
+            row=row, col=col
+        )
+        
+        fig.update_yaxes(
+            title_text='Density',
+            row=row, col=col
+        )
     
-    def _plot_rolling_return_distribution(self, ax, period_type, window, freq):
+    def _plot_rolling_return_distribution(self, fig, period_type, window, freq, row=1, col=1):
         """Plot return distribution for rolling period returns."""
         # Calculate rolling period returns
         if freq == 'W':
@@ -637,9 +871,6 @@ class PortfolioAnalytics:
         # Drop NaN values
         period_returns = period_returns.dropna()
         
-        # Plot histogram with KDE
-        sns.histplot(period_returns, ax=ax, bins=30, kde=True, color='#0066CC', stat='density', alpha=0.7)
-        
         # Calculate statistics
         mean = period_returns.mean()
         std = period_returns.std()
@@ -648,38 +879,91 @@ class PortfolioAnalytics:
         min_ret = period_returns.min()
         max_ret = period_returns.max()
         
-        # Add normal distribution for comparison
-        x = np.linspace(max(period_returns.min(), mean - 3*std), min(period_returns.max(), mean + 3*std), 100)
-        y = stats.norm.pdf(x, mean, std)
-        ax.plot(x, y, 'r--', linewidth=1.5, label='Normal Dist.')
+        # Add histogram
+        fig.add_trace(
+            go.Histogram(
+                x=period_returns,
+                name=f'{period_type} Returns',
+                nbinsx=30,
+                opacity=0.7,
+                marker_color='#0066CC',
+                histnorm='probability density'
+            ),
+            row=row, col=col
+        )
         
-        # Add summary statistics
+        # Add normal distribution for comparison
+        x = np.linspace(
+            max(period_returns.min(), mean - 3*std), 
+            min(period_returns.max(), mean + 3*std), 
+            100
+        )
+        y = stats.norm.pdf(x, mean, std)
+        
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=y,
+                mode='lines',
+                name='Normal Dist.',
+                line=dict(color='red', width=2, dash='dash'),
+                showlegend=False  # Don't show legend for every subplot
+            ),
+            row=row, col=col
+        )
+        
+        # Add vertical line at mean
+        fig.add_shape(
+            type="line",
+            x0=mean, y0=0,
+            x1=mean, y1=max(stats.norm.pdf(mean, mean, std) * 1.1, 0.1),
+            line=dict(color="red", width=2),
+            row=row, col=col
+        )
+        
+        # Add vertical line at zero
+        fig.add_shape(
+            type="line",
+            x0=0, y0=0,
+            x1=0, y1=max(stats.norm.pdf(0, mean, std) * 1.1, 0.1),
+            line=dict(color="black", width=1, dash="dash"),
+            row=row, col=col
+        )
+        
+        # Add statistics annotation
         stats_text = (
-            f"Mean: {mean:.2f}%\n"
-            f"Std Dev: {std:.2f}%\n"
-            f"Skew: {skew:.2f}\n"
-            f"Kurtosis: {kurt:.2f}\n"
-            f"Min: {min_ret:.2f}%\n"
+            f"Mean: {mean:.2f}%<br>"
+            f"Std Dev: {std:.2f}%<br>"
+            f"Skew: {skew:.2f}<br>"
+            f"Kurtosis: {kurt:.2f}<br>"
+            f"Min: {min_ret:.2f}%<br>"
             f"Max: {max_ret:.2f}%"
         )
         
-        props = dict(boxstyle='round', facecolor='white', alpha=0.7)
-        ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, fontsize=9,
-               verticalalignment='top', bbox=props)
+        fig.add_annotation(
+            x=0.05, y=0.95,
+            text=stats_text,
+            showarrow=False,
+            font=dict(size=10),
+            bgcolor="white",
+            bordercolor="#c7c7c7",
+            borderwidth=1,
+            borderpad=4,
+            xref="paper", yref="paper",
+            xanchor='left', yanchor='top',
+            row=row, col=col
+        )
         
         # Format axes
-        ax.set_title(f'{period_type} Return Distribution', fontsize=12)
-        ax.set_xlabel(f'{period_type} Return (%)')
-        ax.set_ylabel('Density')
+        fig.update_xaxes(
+            title_text=f'{period_type} Return (%)',
+            row=row, col=col
+        )
         
-        # Add legend
-        ax.legend()
-        
-        # Add vertical line at mean
-        ax.axvline(mean, color='red', linestyle='-', linewidth=1, label='Mean')
-        
-        # Add vertical line at zero
-        ax.axvline(0, color='black', linestyle='--', linewidth=1)
+        fig.update_yaxes(
+            title_text='Density',
+            row=row, col=col
+        )
     
     def create_performance_metrics_table(self):
         """
@@ -752,67 +1036,39 @@ class PortfolioAnalytics:
         csv_path = f"{output_path}_metrics.csv"
         metrics_table.to_csv(csv_path, index=False)
         
-        # Generate HTML content
-        current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # Create an interactive HTML table with Plotly
+        fig = go.Figure(data=[
+            go.Table(
+                header=dict(
+                    values=list(metrics_table.columns),
+                    fill_color='#0066CC',
+                    font=dict(color='white', size=12),
+                    align='center'
+                ),
+                cells=dict(
+                    values=[metrics_table[col] for col in metrics_table.columns],
+                    fill_color=[
+                        ['#f9f9f9', '#ffffff'] * (len(metrics_table) // 2 + 1)
+                    ],
+                    align=['left' if col == 'Period' else 'right' for col in metrics_table.columns],
+                    font_size=11,
+                    height=25
+                )
+            )
+        ])
         
-        # Use triple quotes with explicit newlines to avoid formatting issues
-        html_content = """<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        table { border-collapse: collapse; width: 100%; }
-        th, td { text-align: right; padding: 8px; border: 1px solid #ddd; }
-        th { background-color: #f2f2f2; }
-        .period-col { text-align: left; font-weight: bold; }
-        .positive { color: green; }
-        .negative { color: red; }
-        h1 { color: #333; }
-        .subtitle { font-size: 0.9em; color: #666; }
-    </style>
-</head>
-<body>
-    <h1>Portfolio Performance Metrics</h1>
-    <p class="subtitle">Generated on """ + current_date + """</p>
-"""
-        
-        # Convert DataFrame to HTML
-        df_html = metrics_table.to_html(index=False, classes='metrics-table')
-        
-        # Manually add custom formatting for positive/negative values
-        for col in ['Return (%)', 'Ann. Return (%)', 'Excess Return (%)', 'Alpha (%)']:
-            if col in metrics_table.columns:
-                for i, value in enumerate(metrics_table[col]):
-                    if isinstance(value, str):
-                        value = float(value.replace('%', ''))
-                    
-                    value_str = f"{value:.2f}%"
-                    if value > 0:
-                        formatted_value = f'<span class="positive">{value_str}</span>'
-                    elif value < 0:
-                        formatted_value = f'<span class="negative">{value_str}</span>'
-                    else:
-                        formatted_value = value_str
-                    
-                    original_cell = f'<td>{metrics_table[col].iloc[i]}</td>'
-                    df_html = df_html.replace(original_cell, f'<td>{formatted_value}</td>')
-        
-        # Add custom formatting for Period column
-        df_html = df_html.replace('<th>Period</th>', '<th class="period-col">Period</th>')
-        for period in metrics_table['Period']:
-            df_html = df_html.replace(f'<td>{period}</td>', f'<td class="period-col">{period}</td>')
-        
-        # Finish HTML
-        html_content += df_html
-        html_content += """
-</body>
-</html>
-"""
+        # Add title and adjust layout
+        fig.update_layout(
+            title=f"Portfolio Performance Metrics (Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')})",
+            title_font=dict(size=16),
+            width=max(800, 120 * len(metrics_table.columns)),
+            height=100 + 35 * len(metrics_table),
+            margin=dict(l=20, r=20, t=60, b=20)
+        )
         
         # Save HTML
         html_path = f"{output_path}_metrics.html"
-        with open(html_path, 'w') as f:
-            f.write(html_content)
+        fig.write_html(html_path)
         
         logger.info(f"Performance metrics saved to {csv_path} and {html_path}")
         

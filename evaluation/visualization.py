@@ -1,43 +1,45 @@
 """
-Fixed visualization module for the deep RL trading framework.
+Enhanced visualization module for the deep RL trading framework using Plotly.
 """
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-import matplotlib.dates as mdates
-import seaborn as sns
-from matplotlib.ticker import FuncFormatter
-import calendar
+import plotly.graph_objects as go
+import plotly.express as px
+import plotly.subplots as sp
+from plotly.subplots import make_subplots
+import plotly.io as pio
 from datetime import datetime
+import os
 import logging
 from scipy import stats
+import calendar
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Set default plotly template
+pio.templates.default = "plotly_white"
+
 class BacktestVisualizer:
-    """Class for creating enhanced visualizations of backtest results."""
+    """Class for creating enhanced visualizations of backtest results using Plotly."""
     
-    def __init__(self, results_df, benchmark_returns=None, figsize=(12, 8), dpi=100, style='seaborn-v0_8-whitegrid'):
+    def __init__(self, results_df, benchmark_returns=None, figsize=(900, 600), theme="plotly_white"):
         """
         Initialize the backtest visualizer.
         
         Args:
             results_df (pd.DataFrame): DataFrame with backtest results
             benchmark_returns (pd.Series, optional): Series with benchmark returns
-            figsize (tuple): Figure size
-            dpi (int): DPI for the figures
-            style (str): Matplotlib style
+            figsize (tuple): Figure size (width, height) in pixels
+            theme (str): Plotly theme/template
         """
         self.results_df = results_df
         self.benchmark_returns = benchmark_returns
         self.figsize = figsize
-        self.dpi = dpi
-        self.style = style
+        self.theme = theme
         
-        # Apply style
-        plt.style.use(self.style)
+        # Set the theme
+        pio.templates.default = self.theme
         
         # Prepare benchmark data if provided
         if self.benchmark_returns is not None:
@@ -91,7 +93,7 @@ class BacktestVisualizer:
             lambda x: (1 + x).prod() - 1
         ).unstack()
         
-    def create_performance_dashboard(self, show_benchmark=True, show_rolling_metrics=True, save_path=None):
+    def create_performance_dashboard(self, show_benchmark=True, show_rolling_metrics=True, save_path=None, show=True):
         """
         Create a comprehensive performance dashboard.
         
@@ -99,266 +101,399 @@ class BacktestVisualizer:
             show_benchmark (bool): Whether to show benchmark comparison
             show_rolling_metrics (bool): Whether to show rolling metrics
             save_path (str, optional): Path to save the figure
+            show (bool): Whether to display the figure
             
         Returns:
-            matplotlib.figure.Figure: The figure
+            plotly.graph_objects.Figure: The figure
         """
-        # Create figure with gridspec for complex layout
-        fig = plt.figure(figsize=self.figsize, dpi=self.dpi, constrained_layout=True)
-        gs = gridspec.GridSpec(3, 2, figure=fig, height_ratios=[2, 1, 1])
+        # Create figure with subplots
+        fig = make_subplots(
+            rows=3, cols=2,
+            row_heights=[0.5, 0.25, 0.25],
+            column_widths=[1.0, 1.0],
+            subplot_titles=(
+                'Cumulative Returns', '',
+                'Drawdowns', '',
+                'Monthly Returns', 'Return Distribution'
+            ),
+            specs=[
+                [{"colspan": 2}, None],
+                [{"colspan": 2}, None],
+                [{"type": "heatmap"}, {"type": "histogram"}]
+            ],
+            vertical_spacing=0.10,
+            horizontal_spacing=0.05
+        )
 
-        # Title the figure
-        fig.suptitle('Trading Strategy Performance Dashboard', fontsize=16, y=0.98)
+        # Add main title
+        fig.update_layout(
+            title={
+                'text': 'Trading Strategy Performance Dashboard',
+                'y': 0.98,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+                'font': {'size': 24}
+            },
+            height=self.figsize[1],
+            width=self.figsize[0],
+            showlegend=True
+        )
         
         # 1. Cumulative returns plot
-        ax_returns = fig.add_subplot(gs[0, :])
-        self._plot_cumulative_returns(ax_returns, show_benchmark=show_benchmark)
+        self._add_cumulative_returns(fig, row=1, col=1, show_benchmark=show_benchmark)
         
         # 2. Drawdown plot
-        ax_drawdown = fig.add_subplot(gs[1, :])
-        self._plot_drawdowns(ax_drawdown)
+        self._add_drawdowns(fig, row=2, col=1)
         
         # 3. Monthly returns heatmap
-        ax_monthly = fig.add_subplot(gs[2, 0])
-        self._plot_monthly_returns_heatmap(ax_monthly)
+        self._add_monthly_returns_heatmap(fig, row=3, col=1)
         
-        # 4. Rolling metrics or stats
-        ax_stats = fig.add_subplot(gs[2, 1])
-        if show_rolling_metrics and 'rolling_sharpe' in self.results_df.columns:
-            self._plot_rolling_metrics(ax_stats)
-        else:
-            self._plot_return_histogram(ax_stats)
+        # 4. Return histogram
+        self._add_return_histogram(fig, row=3, col=2)
         
         # Save if path provided
         if save_path:
-            fig.savefig(save_path, bbox_inches='tight')
+            fig.write_image(save_path)
             logger.info(f"Performance dashboard saved to {save_path}")
         
+        # Show plot if requested
+        if show:
+            fig.show()
+            
         return fig
     
-    def _plot_cumulative_returns(self, ax, show_benchmark=True):
-        """Plot cumulative returns on the given axis."""
+    def _add_cumulative_returns(self, fig, row=1, col=1, show_benchmark=True):
+        """Add cumulative returns plot to the figure."""
         # Plot strategy returns
-        self.results_df['cumulative_return'].mul(100).plot(ax=ax, color='#0066CC', linewidth=2, label='Strategy')
+        fig.add_trace(
+            go.Scatter(
+                x=self.results_df.index,
+                y=self.results_df['cumulative_return'] * 100,
+                mode='lines',
+                name='Strategy',
+                line=dict(color='#0066CC', width=2)
+            ),
+            row=row, col=col
+        )
         
         # Add benchmark if available
         if show_benchmark and self.benchmark_returns is not None:
             benchmark_cumret = self.benchmark_cumulative - 1
             # Align benchmark to the same time period
             benchmark_cumret = benchmark_cumret.loc[benchmark_cumret.index.intersection(self.results_df.index)]
-            benchmark_cumret.mul(100).plot(ax=ax, color='#999999', linewidth=1.5, linestyle='--', label='Benchmark')
+            
+            fig.add_trace(
+                go.Scatter(
+                    x=benchmark_cumret.index,
+                    y=benchmark_cumret * 100,
+                    mode='lines',
+                    name='Benchmark',
+                    line=dict(color='#999999', width=1.5, dash='dash')
+                ),
+                row=row, col=col
+            )
         
-        # Format the axis
-        ax.set_title('Cumulative Returns', fontsize=12)
-        ax.set_ylabel('Return (%)')
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc='upper left')
+        # Format axes
+        fig.update_yaxes(
+            title_text='Return (%)',
+            gridcolor='rgba(0,0,0,0.1)',
+            zerolinecolor='black',
+            row=row, col=col
+        )
         
-        # Format x-axis with dates
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
-        
-        # Format y-axis as percentage
-        ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:.0f}%'))
-        
-        # Add horizontal line at y=0
-        ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
-        
-        # Annotate final return
+        # Add final return annotation
         final_return = self.results_df['cumulative_return'].iloc[-1] * 100
-        ax.annotate(f'{final_return:.2f}%', 
-                   xy=(self.results_df.index[-1], final_return),
-                   xytext=(10, 0), textcoords='offset points',
-                   va='center', fontweight='bold')
-        
-    def _plot_drawdowns(self, ax):
-        """Plot drawdowns on the given axis."""
+        fig.add_annotation(
+            x=self.results_df.index[-1],
+            y=final_return,
+            text=f"{final_return:.2f}%",
+            showarrow=True,
+            arrowhead=1,
+            ax=20,
+            ay=-30,
+            font=dict(size=12, color="black", family="Arial"),
+            bgcolor="white",
+            bordercolor="#c7c7c7",
+            borderwidth=1,
+            borderpad=4,
+            row=row, col=col
+        )
+    
+    def _add_drawdowns(self, fig, row=2, col=1):
+        """Add drawdowns plot to the figure."""
         # Plot drawdowns
-        self.results_df['drawdown'].mul(100).plot(ax=ax, color='#CC0000', linewidth=1.5, alpha=0.7)
+        fig.add_trace(
+            go.Scatter(
+                x=self.results_df.index,
+                y=self.results_df['drawdown'] * 100,
+                mode='lines',
+                name='Drawdown',
+                line=dict(color='#CC0000', width=1.5),
+                fill='tozeroy',
+                fillcolor='rgba(204,0,0,0.1)'
+            ),
+            row=row, col=col
+        )
         
-        # Format the axis
-        ax.set_title('Drawdowns', fontsize=12)
-        ax.set_ylabel('Drawdown (%)')
-        ax.grid(True, alpha=0.3)
-        
-        # Format y-axis as percentage and invert
-        ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:.0f}%'))
-        ax.invert_yaxis()
-        
-        # Format x-axis with dates
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        # Format axes
+        fig.update_yaxes(
+            title_text='Drawdown (%)',
+            gridcolor='rgba(0,0,0,0.1)',
+            zerolinecolor='black',
+            autorange="reversed",  # Invert y-axis to show drawdowns as negative
+            row=row, col=col
+        )
         
         # Highlight maximum drawdown
         max_drawdown_idx = self.results_df['drawdown'].idxmin()
         max_drawdown = self.results_df.loc[max_drawdown_idx, 'drawdown'] * 100
-        ax.annotate(f'Max DD: {max_drawdown:.2f}%', 
-                   xy=(max_drawdown_idx, max_drawdown),
-                   xytext=(10, -20), textcoords='offset points',
-                   arrowprops=dict(arrowstyle='->', color='black'),
-                   fontweight='bold', color='#CC0000')
+        
+        fig.add_annotation(
+            x=max_drawdown_idx,
+            y=max_drawdown,
+            text=f"Max DD: {max_drawdown:.2f}%",
+            showarrow=True,
+            arrowhead=1,
+            ax=50,
+            ay=0,
+            font=dict(size=12, color="#CC0000", family="Arial"),
+            bgcolor="white",
+            bordercolor="#c7c7c7",
+            borderwidth=1,
+            borderpad=4,
+            row=row, col=col
+        )
     
-    def _plot_monthly_returns_heatmap(self, ax):
-        """Plot monthly returns heatmap on the given axis."""
+    def _add_monthly_returns_heatmap(self, fig, row=3, col=1):
+        """Add monthly returns heatmap to the figure."""
         if self.monthly_returns.empty:
-            ax.text(0.5, 0.5, 'Insufficient data for monthly heatmap', 
-                   ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Monthly Returns (%)', fontsize=12)
+            fig.add_annotation(
+                x=0.5, y=0.5,
+                text='Insufficient data for monthly heatmap',
+                showarrow=False,
+                font=dict(size=12),
+                row=row, col=col
+            )
             return
-            
-        # Create heatmap
-        monthly_returns_pct = self.monthly_returns * 100
         
         # Format month names and handle potentially missing data
         month_names = {i: calendar.month_abbr[i] for i in range(1, 13)}
-        formatted_data = monthly_returns_pct.rename(columns=month_names)
+        formatted_data = self.monthly_returns.rename(columns=month_names)
         
-        # Create the heatmap
-        sns.heatmap(formatted_data, annot=True, fmt='.1f', cmap='RdYlGn', 
-                   center=0, cbar=False, ax=ax, linewidths=0.5,
-                   annot_kws={"size": 9})
+        # Convert to format suitable for Plotly heatmap
+        z_data = formatted_data.values * 100  # Convert to percentage
+        x_data = [month_names[i] for i in formatted_data.columns]
+        y_data = formatted_data.index.get_level_values(0)  # Years
         
-        # Format the axis
-        ax.set_title('Monthly Returns (%)', fontsize=12)
-        ax.set_ylabel('Year')
-        ax.set_xlabel('')
+        # Create custom text for hover
+        hover_text = [[f"{z_data[i][j]:.2f}%" for j in range(len(x_data))] for i in range(len(y_data))]
+        
+        # Create heatmap
+        fig.add_trace(
+            go.Heatmap(
+                z=z_data,
+                x=x_data,
+                y=y_data,
+                colorscale='RdYlGn',
+                zmid=0,
+                text=hover_text,
+                hoverinfo='text+x+y',
+                colorbar=dict(
+                    title="Return (%)",
+                    thickness=10,
+                    len=0.6,
+                    y=0.8,
+                    x=1.1
+                )
+            ),
+            row=row, col=col
+        )
+        
+        # Format axes
+        fig.update_yaxes(
+            title_text='Year',
+            row=row, col=col
+        )
     
-    def _plot_rolling_metrics(self, ax):
-        """Plot rolling performance metrics on the given axis."""
-        ax2 = ax.twinx()
+    def _add_return_histogram(self, fig, row=3, col=2):
+        """Add return distribution histogram to the figure."""
+        # Calculate statistics for annotations
+        returns = self.results_df['return'] * 100
+        mean_return = returns.mean()
+        median_return = returns.median()
         
-        # Plot rolling Sharpe ratio
-        self.results_df['rolling_sharpe'].plot(ax=ax, color='#0066CC', linewidth=1.5, label='Rolling Sharpe')
+        # Add histogram
+        fig.add_trace(
+            go.Histogram(
+                x=returns,
+                nbinsx=50,
+                opacity=0.7,
+                name='Daily Returns',
+                marker_color='#0066CC',
+                histnorm='probability density'
+            ),
+            row=row, col=col
+        )
         
-        # Plot rolling volatility on the second y-axis
-        (self.results_df['rolling_volatility'] * 100).plot(ax=ax2, color='#CC0000', linewidth=1.5, 
-                                                          linestyle='--', label='Rolling Vol')
+        # Add KDE (kernel density estimate)
+        x_kde = np.linspace(returns.min(), returns.max(), 100)
+        kde = stats.gaussian_kde(returns.dropna())
+        y_kde = kde(x_kde)
         
-        # Format the axes
-        ax.set_title('Rolling Performance Metrics (252-day)', fontsize=12)
-        ax.set_ylabel('Sharpe Ratio')
-        ax2.set_ylabel('Volatility (%)')
-        
-        # Add legend
-        lines1, labels1 = ax.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
-        
-        # Format x-axis
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
-        
-        # Format y-axis
-        ax2.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:.0f}%'))
-        
-        # Add horizontal line at y=0 for Sharpe
-        ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
-        
-        # Add grid but only from the first axis
-        ax.grid(True, alpha=0.3)
-        ax2.grid(False)
-    
-    def _plot_return_histogram(self, ax):
-        """Plot return distribution histogram on the given axis."""
-        # Plot histogram
-        self.results_df['return'].mul(100).hist(ax=ax, bins=50, alpha=0.7, color='#0066CC')
-        
-        # Format the axis
-        ax.set_title('Return Distribution', fontsize=12)
-        ax.set_xlabel('Daily Return (%)')
-        ax.set_ylabel('Frequency')
+        fig.add_trace(
+            go.Scatter(
+                x=x_kde,
+                y=y_kde,
+                mode='lines',
+                name='Density',
+                line=dict(color='#CC0000', width=2)
+            ),
+            row=row, col=col
+        )
         
         # Add mean and median lines
-        mean_return = self.results_df['return'].mean() * 100
-        median_return = self.results_df['return'].median() * 100
+        fig.add_trace(
+            go.Scatter(
+                x=[mean_return, mean_return],
+                y=[0, max(y_kde) * 1.1],
+                mode='lines',
+                name=f'Mean: {mean_return:.2f}%',
+                line=dict(color='#CC0000', width=2, dash='dash')
+            ),
+            row=row, col=col
+        )
         
-        ax.axvline(mean_return, color='#CC0000', linestyle='-', linewidth=1.5, label=f'Mean: {mean_return:.2f}%')
-        ax.axvline(median_return, color='green', linestyle='--', linewidth=1.5, label=f'Median: {median_return:.2f}%')
+        fig.add_trace(
+            go.Scatter(
+                x=[median_return, median_return],
+                y=[0, max(y_kde) * 1.1],
+                mode='lines',
+                name=f'Median: {median_return:.2f}%',
+                line=dict(color='green', width=2, dash='dash')
+            ),
+            row=row, col=col
+        )
         
-        # Add legend
-        ax.legend()
+        # Format axes
+        fig.update_xaxes(
+            title_text='Daily Return (%)',
+            row=row, col=col
+        )
+        
+        fig.update_yaxes(
+            title_text='Density',
+            row=row, col=col
+        )
     
-    def create_position_analysis(self, num_assets=10, save_path=None):
+    def create_position_analysis(self, num_assets=10, save_path=None, show=True):
         """
         Create position and allocation analysis plots.
         
         Args:
             num_assets (int): Number of top assets to display
             save_path (str, optional): Path to save the figure
+            show (bool): Whether to display the figure
             
         Returns:
-            matplotlib.figure.Figure: The figure
+            plotly.graph_objects.Figure: The figure
         """
         # Identify weight columns
         weight_cols = [col for col in self.results_df.columns if col.startswith('weight_')]
         
         if not weight_cols:
             logger.warning("No position data found in results DataFrame")
-            fig, ax = plt.subplots(figsize=self.figsize, dpi=self.dpi)
-            ax.text(0.5, 0.5, 'No position data available', ha='center', va='center')
+            fig = go.Figure()
+            fig.add_annotation(
+                x=0.5, y=0.5,
+                text='No position data available',
+                showarrow=False,
+                font=dict(size=20)
+            )
             return fig
         
-        # Create figure with gridspec - FIXED: use constrained_layout instead of tight_layout
-        fig = plt.figure(figsize=self.figsize, dpi=self.dpi, constrained_layout=True)
-        gs = gridspec.GridSpec(2, 2, figure=fig)
-        
-        # Title the figure
-        fig.suptitle('Portfolio Allocation Analysis', fontsize=16, y=0.98)
+        # Create figure with subplots
+        fig = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=(
+                'Asset Allocation Over Time',
+                'Current Allocation',
+                'Top Asset Allocations',
+                'Allocation Heatmap (Monthly)'
+            ),
+            specs=[
+                [{"colspan": 2}, None],
+                [{"type": "domain"}, {"type": "heatmap"}]
+            ],
+            vertical_spacing=0.15
+        )
+
+        # Add main title
+        fig.update_layout(
+            title={
+                'text': 'Portfolio Allocation Analysis',
+                'y': 0.98,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+                'font': {'size': 24}
+            },
+            height=self.figsize[1],
+            width=self.figsize[0]
+        )
         
         # 1. Asset allocation over time
-        ax_alloc = fig.add_subplot(gs[0, :])
-        self._plot_asset_allocation(ax_alloc, weight_cols)
+        self._add_asset_allocation(fig, weight_cols, num_assets, row=1, col=1)
         
-        # 2. Current allocation
-        ax_current = fig.add_subplot(gs[1, 0])
-        self._plot_current_allocation(ax_current, weight_cols, num_assets)
+        # 2. Current allocation pie chart
+        self._add_current_allocation(fig, weight_cols, num_assets, row=2, col=1)
         
         # 3. Allocation heatmap
-        ax_heatmap = fig.add_subplot(gs[1, 1])
-        self._plot_allocation_heatmap(ax_heatmap, weight_cols, num_assets)
+        self._add_allocation_heatmap(fig, weight_cols, num_assets, row=2, col=2)
         
         # Save if path provided
         if save_path:
-            fig.savefig(save_path, bbox_inches='tight')
+            fig.write_image(save_path)
             logger.info(f"Position analysis saved to {save_path}")
         
+        # Show if requested
+        if show:
+            fig.show()
+            
         return fig
     
-    def _plot_asset_allocation(self, ax, weight_cols):
-        """Plot asset allocation over time."""
-        # Create a stacked area chart
-        # Use only the top assets to avoid too many colors
-        top_assets = self._get_top_assets(weight_cols, n=10)
-        allocation_data = self.results_df[top_assets]
+    def _add_asset_allocation(self, fig, weight_cols, num_assets=10, row=1, col=1):
+        """Add asset allocation over time to the figure."""
+        # Get top assets by average absolute weight
+        top_assets = self._get_top_assets(weight_cols, n=num_assets)
         
-        # Convert to percentage
-        allocation_data = allocation_data.mul(100)
+        # Extract data
+        allocation_data = self.results_df[top_assets].abs() * 100  # Convert to percentage
         
-        # Create area plot
-        allocation_data.plot.area(ax=ax, linewidth=0, alpha=0.7, colormap='tab20')
+        # Plot each asset allocation as a line
+        for asset in top_assets:
+            ticker = asset.replace('weight_', '')
+            fig.add_trace(
+                go.Scatter(
+                    x=self.results_df.index,
+                    y=allocation_data[asset],
+                    mode='lines',
+                    name=ticker,
+                    stackgroup='one'  # Stacked area chart
+                ),
+                row=row, col=col
+            )
         
-        # Format the axis
-        ax.set_title('Asset Allocation Over Time', fontsize=12)
-        ax.set_ylabel('Allocation (%)')
-        ax.set_xlabel('')
-        
-        # Format x-axis with dates
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
-        
-        # Format y-axis as percentage
-        ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:.0f}%'))
-        
-        # Add legend
-        ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=5, frameon=False,
-                 title='Assets', title_fontsize=10)
+        # Format axes
+        fig.update_yaxes(
+            title_text='Allocation (%)',
+            gridcolor='rgba(0,0,0,0.1)',
+            range=[0, 100],
+            row=row, col=col
+        )
     
-    def _plot_current_allocation(self, ax, weight_cols, num_assets=10):
-        """Plot current allocation as a pie chart."""
+    def _add_current_allocation(self, fig, weight_cols, num_assets=10, row=2, col=1):
+        """Add current allocation pie chart to the figure."""
         # Get the last row of data
         current_weights = self.results_df[weight_cols].iloc[-1]
         
@@ -368,136 +503,172 @@ class BacktestVisualizer:
         
         # Convert ticker names for display
         labels = [col.replace('weight_', '') for col in top_actual_weights.index]
+        values = top_actual_weights.abs() * 100  # Convert to percentage
         
-        # Create pie chart
-        wedges, texts, autotexts = ax.pie(
-            top_actual_weights.abs(),
-            labels=None,
-            autopct='%1.1f%%',
-            startangle=90,
-            wedgeprops={'linewidth': 1, 'edgecolor': 'white'},
-            textprops={'fontsize': 9},
-            colors=plt.cm.tab20.colors[:len(top_actual_weights)]
+        # Add pie chart
+        fig.add_trace(
+            go.Pie(
+                labels=labels,
+                values=values,
+                hole=0.4,
+                textinfo='label+percent',
+                insidetextorientation='radial',
+                marker=dict(
+                    line=dict(color='#FFFFFF', width=1)
+                ),
+                textfont=dict(size=12),
+            ),
+            row=row, col=col
         )
-        
-        # Adjust text properties
-        for autotext in autotexts:
-            autotext.set_fontsize(8)
-            autotext.set_weight('bold')
-        
-        # Add legend
-        ax.legend(wedges, labels, loc='center left', bbox_to_anchor=(1, 0.5), frameon=False, fontsize=9)
-        
-        # Format the axis
-        ax.set_title('Current Allocation', fontsize=12)
-        ax.set_aspect('equal')
-        
-    def _plot_allocation_heatmap(self, ax, weight_cols, num_assets=10):
-        """Plot allocation heatmap over time."""
+    
+    def _add_allocation_heatmap(self, fig, weight_cols, num_assets=10, row=2, col=2):
+        """Add allocation heatmap to the figure."""
         # Get top assets
         top_assets = self._get_top_assets(weight_cols, n=num_assets)
         
         # Resample to monthly data to reduce density
-        # FIXED: Change from 'M' to 'ME' to avoid deprecation warning
-        monthly_data = self.results_df[top_assets].resample('ME').last()
+        monthly_data = self.results_df[top_assets].resample('ME').last() * 100  # Convert to percentage
         
-        # Create labels for x-axis (dates)
+        # Create labels for axes
         date_labels = [d.strftime('%Y-%m') for d in monthly_data.index]
-        
-        # Create labels for y-axis (tickers)
         ticker_labels = [col.replace('weight_', '') for col in monthly_data.columns]
         
-        # Create heatmap with cbar_kws to avoid layout issues
-        sns.heatmap(monthly_data.T * 100, cmap='RdBu_r', center=0, 
-                   linewidths=0.3, annot=False, fmt='.0f', ax=ax,
-                   xticklabels=date_labels, yticklabels=ticker_labels,
-                   cbar_kws={'label': 'Allocation (%)', 'use_gridspec': False, 'shrink': 0.9})
+        # Create heatmap
+        fig.add_trace(
+            go.Heatmap(
+                z=monthly_data.T.values,
+                x=date_labels,
+                y=ticker_labels,
+                colorscale='RdBu_r',
+                zmid=0,  # Center colorscale at 0
+                colorbar=dict(
+                    title="Allocation (%)",
+                    thickness=10,
+                    len=0.6
+                )
+            ),
+            row=row, col=col
+        )
         
-        # Format the axis
-        ax.set_title('Allocation Heatmap (Monthly)', fontsize=12)
-        ax.set_ylabel('')
-        ax.set_xlabel('')
+        # Format axes
+        fig.update_yaxes(
+            title_text='Asset',
+            row=row, col=col
+        )
         
-        # Rotate x-axis labels
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=90)
+        fig.update_xaxes(
+            title_text='Date',
+            tickangle=45,
+            row=row, col=col
+        )
     
     def _get_top_assets(self, weight_cols, n=10):
         """Get the top n assets by average absolute weight."""
         avg_weights = self.results_df[weight_cols].abs().mean().nlargest(n)
         return avg_weights.index.tolist()
     
-    def create_risk_analysis(self, save_path=None):
+    def create_risk_analysis(self, save_path=None, show=True):
         """
         Create risk analysis visualizations.
         
         Args:
             save_path (str, optional): Path to save the figure
+            show (bool): Whether to display the figure
             
         Returns:
-            matplotlib.figure.Figure: The figure
+            plotly.graph_objects.Figure: The figure
         """
-        # FIXED: Use constrained_layout instead of tight_layout
-        fig = plt.figure(figsize=self.figsize, dpi=self.dpi, constrained_layout=True)
-        gs = gridspec.GridSpec(2, 2, figure=fig)
-        
-        # Title the figure
-        fig.suptitle('Risk Analysis Dashboard', fontsize=16, y=0.98)
+        # Create figure with subplots
+        fig = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=(
+                'Rolling Volatility (252-day)',
+                'Rolling VaR & CVaR (252-day)',
+                'Drawdown Periods',
+                'Return Distribution vs. Normal'
+            ),
+            vertical_spacing=0.15,
+            horizontal_spacing=0.10
+        )
+
+        # Add main title
+        fig.update_layout(
+            title={
+                'text': 'Risk Analysis Dashboard',
+                'y': 0.98,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+                'font': {'size': 24}
+            },
+            height=self.figsize[1],
+            width=self.figsize[0]
+        )
         
         # 1. Rolling volatility
-        ax_vol = fig.add_subplot(gs[0, 0])
-        self._plot_rolling_volatility(ax_vol)
+        self._add_rolling_volatility(fig, row=1, col=1)
         
         # 2. Rolling VaR and CVaR
-        ax_var = fig.add_subplot(gs[0, 1])
-        self._plot_rolling_var(ax_var)
+        self._add_rolling_var(fig, row=1, col=2)
         
         # 3. Drawdown periods
-        ax_dd = fig.add_subplot(gs[1, 0])
-        self._plot_drawdown_periods(ax_dd)
+        self._add_drawdown_periods(fig, row=2, col=1)
         
         # 4. Return distribution
-        ax_dist = fig.add_subplot(gs[1, 1])
-        self._plot_return_distribution(ax_dist)
+        self._add_return_distribution_with_normal(fig, row=2, col=2)
         
         # Save if path provided
         if save_path:
-            fig.savefig(save_path, bbox_inches='tight')
+            fig.write_image(save_path)
             logger.info(f"Risk analysis saved to {save_path}")
+            
+        # Show if requested
+        if show:
+            fig.show()
         
         return fig
     
-    def _plot_rolling_volatility(self, ax):
-        """Plot rolling volatility."""
+    def _add_rolling_volatility(self, fig, row=1, col=1):
+        """Add rolling volatility plot to the figure."""
         # Calculate rolling volatility if not already done
         if 'rolling_volatility' not in self.results_df.columns:
             window = min(252, len(self.results_df) // 4)
             self.results_df['rolling_volatility'] = self.results_df['return'].rolling(window).std() * np.sqrt(252)
         
         # Plot rolling volatility
-        (self.results_df['rolling_volatility'] * 100).plot(ax=ax, color='#CC0000', linewidth=1.5)
-        
-        # Format the axis
-        ax.set_title('Rolling Volatility (252-day)', fontsize=12)
-        ax.set_ylabel('Annualized Volatility (%)')
-        
-        # Format x-axis with dates
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
-        
-        # Format y-axis as percentage
-        ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:.0f}%'))
-        
-        # Add grid
-        ax.grid(True, alpha=0.3)
+        fig.add_trace(
+            go.Scatter(
+                x=self.results_df.index,
+                y=self.results_df['rolling_volatility'] * 100,
+                mode='lines',
+                name='Rolling Vol',
+                line=dict(color='#CC0000', width=2)
+            ),
+            row=row, col=col
+        )
         
         # Add average line
         avg_vol = self.results_df['rolling_volatility'].mean() * 100
-        ax.axhline(avg_vol, color='black', linestyle='--', linewidth=1, label=f'Avg: {avg_vol:.1f}%')
-        ax.legend()
+        fig.add_trace(
+            go.Scatter(
+                x=[self.results_df.index[0], self.results_df.index[-1]],
+                y=[avg_vol, avg_vol],
+                mode='lines',
+                name=f'Avg: {avg_vol:.1f}%',
+                line=dict(color='black', width=1, dash='dash')
+            ),
+            row=row, col=col
+        )
+        
+        # Format axes
+        fig.update_yaxes(
+            title_text='Annualized Volatility (%)',
+            gridcolor='rgba(0,0,0,0.1)',
+            row=row, col=col
+        )
     
-    def _plot_rolling_var(self, ax):
-        """Plot rolling VaR and CVaR."""
+    def _add_rolling_var(self, fig, row=1, col=1):
+        """Add rolling VaR and CVaR plot to the figure."""
         # Calculate rolling VaR and CVaR
         window = min(252, len(self.results_df) // 4)
         if window > 20:  # Only calculate if we have enough data
@@ -512,56 +683,71 @@ class BacktestVisualizer:
                 rolling_cvar, raw=True
             )
             
-            # Plot rolling VaR and CVaR
-            self.results_df['rolling_var95'].plot(ax=ax, color='#0066CC', linewidth=1.5, label='VaR (95%)')
-            self.results_df['rolling_cvar95'].plot(ax=ax, color='#CC0000', linewidth=1.5, label='CVaR (95%)')
+            # Plot rolling VaR
+            fig.add_trace(
+                go.Scatter(
+                    x=self.results_df.index,
+                    y=self.results_df['rolling_var95'],
+                    mode='lines',
+                    name='VaR (95%)',
+                    line=dict(color='#0066CC', width=2)
+                ),
+                row=row, col=col
+            )
             
-            # Format the axis
-            ax.set_title('Rolling VaR & CVaR (252-day)', fontsize=12)
-            ax.set_ylabel('Daily Loss (%)')
+            # Plot rolling CVaR
+            fig.add_trace(
+                go.Scatter(
+                    x=self.results_df.index,
+                    y=self.results_df['rolling_cvar95'],
+                    mode='lines',
+                    name='CVaR (95%)',
+                    line=dict(color='#CC0000', width=2)
+                ),
+                row=row, col=col
+            )
             
-            # Format x-axis with dates
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-            ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
-            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
-            
-            # Add grid
-            ax.grid(True, alpha=0.3)
-            
-            # Add legend
-            ax.legend()
+            # Format axes
+            fig.update_yaxes(
+                title_text='Daily Loss (%)',
+                gridcolor='rgba(0,0,0,0.1)',
+                row=row, col=col
+            )
         else:
             # Not enough data
-            ax.text(0.5, 0.5, 'Insufficient data for rolling VaR/CVaR', 
-                   ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Rolling VaR & CVaR', fontsize=12)
+            fig.add_annotation(
+                x=0.5, y=0.5,
+                text='Insufficient data for rolling VaR/CVaR',
+                showarrow=False,
+                font=dict(size=12),
+                row=row, col=col
+            )
     
-    def _plot_drawdown_periods(self, ax):
-        """Plot drawdown underwater chart with highlighted periods."""
+    def _add_drawdown_periods(self, fig, row=1, col=1):
+        """Add drawdown periods plot to the figure."""
         # Plot the drawdown underwater chart
-        self.results_df['drawdown'].mul(100).plot(ax=ax, color='#CC0000', linewidth=1.5, alpha=0.7)
+        fig.add_trace(
+            go.Scatter(
+                x=self.results_df.index,
+                y=self.results_df['drawdown'] * 100,
+                mode='lines',
+                name='Drawdown',
+                line=dict(color='#CC0000', width=1.5),
+                fill='tozeroy',
+                fillcolor='rgba(204,0,0,0.3)'
+            ),
+            row=row, col=col
+        )
         
-        # Fill the area
-        ax.fill_between(self.results_df.index, 0, self.results_df['drawdown'].mul(100), color='#CC0000', alpha=0.3)
-        
-        # Format the axis
-        ax.set_title('Drawdown Periods', fontsize=12)
-        ax.set_ylabel('Drawdown (%)')
-        
-        # Format y-axis as percentage and invert
-        ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:.0f}%'))
-        ax.invert_yaxis()
-        
-        # Format x-axis with dates
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
-        
-        # Add grid
-        ax.grid(True, alpha=0.3)
+        # Format axes
+        fig.update_yaxes(
+            title_text='Drawdown (%)',
+            gridcolor='rgba(0,0,0,0.1)',
+            autorange="reversed",  # Invert y-axis
+            row=row, col=col
+        )
         
         # Identify major drawdown periods (e.g., drawdowns > 10%)
-        # First, identify where drawdowns cross below -0.1 (-10%)
         threshold = -0.1
         crosses_below = (self.results_df['drawdown'] < threshold) & (self.results_df['drawdown'].shift(1) >= threshold)
         crosses_above = (self.results_df['drawdown'] >= threshold) & (self.results_df['drawdown'].shift(1) < threshold)
@@ -573,162 +759,309 @@ class BacktestVisualizer:
         # Adjust if we start in a drawdown or end in a drawdown
         if sum(self.results_df['drawdown'] < threshold) > 0:  # Check if we have any major drawdowns
             if not any(crosses_below) or self.results_df['drawdown'].iloc[0] < threshold:
-                start_dates = start_dates.insert(0, self.results_df.index[0])
+                start_dates = pd.Index([self.results_df.index[0]]).append(start_dates)
             if not any(crosses_above) or self.results_df['drawdown'].iloc[-1] < threshold:
                 end_dates = end_dates.append(pd.Index([self.results_df.index[-1]]))
         
-        # Highlight major drawdown periods
+        # Add rectangles for major drawdown periods
         for i in range(min(len(start_dates), len(end_dates))):
             if i < len(start_dates) and i < len(end_dates):
-                ax.axvspan(start_dates[i], end_dates[i], color='red', alpha=0.2)
+                fig.add_vrect(
+                    x0=start_dates[i],
+                    x1=end_dates[i],
+                    fillcolor="red",
+                    opacity=0.2,
+                    layer="below",
+                    line_width=0,
+                    row=row, col=col
+                )
     
-    def _plot_return_distribution(self, ax):
-        """Plot return distribution with normal curve for comparison."""
+    def _add_return_distribution_with_normal(self, fig, row=1, col=1):
+        """Add return distribution with normal curve to the figure."""
         # Get return data
         returns = self.results_df['return'].dropna() * 100
         
-        # Plot histogram
-        sns.histplot(returns, ax=ax, bins=50, kde=True, color='#0066CC', stat='density', alpha=0.7)
+        # Add histogram
+        fig.add_trace(
+            go.Histogram(
+                x=returns,
+                nbinsx=50,
+                opacity=0.7,
+                name='Returns',
+                marker_color='#0066CC',
+                histnorm='probability density'
+            ),
+            row=row, col=col
+        )
         
         # Add normal distribution for comparison
         x = np.linspace(returns.min(), returns.max(), 100)
         mean = returns.mean()
         std = returns.std()
         y = stats.norm.pdf(x, mean, std)
-        ax.plot(x, y, 'r--', linewidth=1.5, label='Normal Dist.')
         
-        # Format the axis
-        ax.set_title('Return Distribution vs. Normal', fontsize=12)
-        ax.set_xlabel('Daily Return (%)')
-        ax.set_ylabel('Density')
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=y,
+                mode='lines',
+                name='Normal Dist.',
+                line=dict(color='red', width=2, dash='dash')
+            ),
+            row=row, col=col
+        )
         
-        # Add statistics annotations
-        props = dict(boxstyle='round', facecolor='white', alpha=0.7)
-        textstr = '\n'.join((
-            f'Mean: {mean:.2f}%',
-            f'Std Dev: {std:.2f}%',
-            f'Skew: {stats.skew(returns):.2f}',
+        # Add statistics annotation
+        stats_text = (
+            f'Mean: {mean:.2f}%<br>'
+            f'Std Dev: {std:.2f}%<br>'
+            f'Skew: {stats.skew(returns):.2f}<br>'
             f'Kurt: {stats.kurtosis(returns):.2f}'
-        ))
-        ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=9,
-               verticalalignment='top', bbox=props)
+        )
         
-        # Add legend
-        ax.legend()
+        fig.add_annotation(
+            x=0.05,
+            y=0.95,
+            xref="x domain",
+            yref="y domain",
+            text=stats_text,
+            showarrow=False,
+            font=dict(size=12),
+            bgcolor="white",
+            bordercolor="#c7c7c7",
+            borderwidth=1,
+            borderpad=4,
+            align="left",
+            row=row, col=col
+        )
         
-        # Add grid
-        ax.grid(True, alpha=0.3)
+        # Format axes
+        fig.update_xaxes(
+            title_text='Daily Return (%)',
+            row=row, col=col
+        )
+        
+        fig.update_yaxes(
+            title_text='Density',
+            row=row, col=col
+        )
     
-    def create_trade_analysis(self, save_path=None):
+    def create_trade_analysis(self, save_path=None, show=True):
         """
         Create trade analysis visualizations.
         
         Args:
             save_path (str, optional): Path to save the figure
+            show (bool): Whether to display the figure
             
         Returns:
-            matplotlib.figure.Figure: The figure
+            plotly.graph_objects.Figure: The figure
         """
         # Identify weight columns
         weight_cols = [col for col in self.results_df.columns if col.startswith('weight_')]
         
         if not weight_cols:
             logger.warning("No position data found in results DataFrame")
-            fig, ax = plt.subplots(figsize=self.figsize, dpi=self.dpi)
-            ax.text(0.5, 0.5, 'No position data available', ha='center', va='center')
+            fig = go.Figure()
+            fig.add_annotation(
+                x=0.5, y=0.5,
+                text='No position data available',
+                showarrow=False,
+                font=dict(size=20)
+            )
             return fig
         
-        # Create figure with gridspec - FIXED: use constrained_layout instead of tight_layout
-        fig = plt.figure(figsize=self.figsize, dpi=self.dpi, constrained_layout=True)
-        gs = gridspec.GridSpec(2, 2, figure=fig)
-        
-        # Title the figure
-        fig.suptitle('Trade Analysis Dashboard', fontsize=16, y=0.98)
+        # Create figure with subplots
+        fig = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=(
+                '20-Day Rolling Turnover',
+                'Position Size Distribution',
+                'Cumulative Return with Major Trades',
+                ''
+            ),
+            specs=[
+                [{}, {}],
+                [{"colspan": 2}, None]
+            ],
+            vertical_spacing=0.15
+        )
+
+        # Add main title
+        fig.update_layout(
+            title={
+                'text': 'Trade Analysis Dashboard',
+                'y': 0.98,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+                'font': {'size': 24}
+            },
+            height=self.figsize[1],
+            width=self.figsize[0]
+        )
         
         # 1. Position changes over time (turnover)
-        ax_turnover = fig.add_subplot(gs[0, 0])
-        self._plot_turnover(ax_turnover, weight_cols)
+        self._add_turnover(fig, weight_cols, row=1, col=1)
         
         # 2. Position sizing distribution
-        ax_sizing = fig.add_subplot(gs[0, 1])
-        self._plot_position_sizing(ax_sizing, weight_cols)
+        self._add_position_sizing(fig, weight_cols, row=1, col=2)
         
         # 3. Trade entry/exit points on performance
-        ax_trades = fig.add_subplot(gs[1, :])
-        self._plot_major_trades(ax_trades, weight_cols)
+        self._add_major_trades(fig, weight_cols, row=2, col=1)
         
         # Save if path provided
         if save_path:
-            fig.savefig(save_path, bbox_inches='tight')
+            fig.write_image(save_path)
             logger.info(f"Trade analysis saved to {save_path}")
+            
+        # Show if requested
+        if show:
+            fig.show()
         
         return fig
     
-    def _plot_turnover(self, ax, weight_cols):
-        """Plot portfolio turnover over time."""
+    def _add_turnover(self, fig, weight_cols, row=1, col=1):
+        """Add portfolio turnover plot to the figure."""
         # Calculate daily position changes (turnover)
         position_changes = self.results_df[weight_cols].diff().abs().sum(axis=1)
         
         # Calculate rolling 20-day turnover
-        rolling_turnover = position_changes.rolling(20).sum()
+        rolling_turnover = position_changes.rolling(20).sum() * 100  # Convert to percentage
         
         # Plot turnover
-        rolling_turnover.mul(100).plot(ax=ax, color='#0066CC', linewidth=1.5)
-        
-        # Format the axis
-        ax.set_title('20-Day Rolling Turnover', fontsize=12)
-        ax.set_ylabel('Turnover (%)')
-        
-        # Format x-axis with dates
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
-        
-        # Format y-axis as percentage
-        ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:.0f}%'))
-        
-        # Add grid
-        ax.grid(True, alpha=0.3)
+        fig.add_trace(
+            go.Scatter(
+                x=self.results_df.index,
+                y=rolling_turnover,
+                mode='lines',
+                name='Turnover',
+                line=dict(color='#0066CC', width=2)
+            ),
+            row=row, col=col
+        )
         
         # Add average line
-        avg_turnover = rolling_turnover.mean() * 100
-        ax.axhline(avg_turnover, color='black', linestyle='--', linewidth=1, label=f'Avg: {avg_turnover:.1f}%')
-        ax.legend()
+        avg_turnover = rolling_turnover.mean()
+        fig.add_trace(
+            go.Scatter(
+                x=[self.results_df.index[0], self.results_df.index[-1]],
+                y=[avg_turnover, avg_turnover],
+                mode='lines',
+                name=f'Avg: {avg_turnover:.1f}%',
+                line=dict(color='black', width=1, dash='dash')
+            ),
+            row=row, col=col
+        )
+        
+        # Format axes
+        fig.update_yaxes(
+            title_text='Turnover (%)',
+            gridcolor='rgba(0,0,0,0.1)',
+            row=row, col=col
+        )
     
-    def _plot_position_sizing(self, ax, weight_cols):
-        """Plot position sizing distribution."""
+    def _add_position_sizing(self, fig, weight_cols, row=1, col=1):
+        """Add position sizing distribution to the figure."""
         # Get all non-zero weights
         all_weights = self.results_df[weight_cols].values.flatten()
-        all_weights = all_weights[all_weights != 0]
+        all_weights = all_weights[all_weights != 0] * 100  # Convert to percentage
         
-        # Plot histogram of position sizes
-        sns.histplot(all_weights * 100, ax=ax, bins=50, kde=True, color='#0066CC')
+        # Calculate statistics
+        mean_weight = np.mean(all_weights)
+        median_weight = np.median(all_weights)
+        min_weight = np.min(all_weights)
+        max_weight = np.max(all_weights)
         
-        # Format the axis
-        ax.set_title('Position Size Distribution', fontsize=12)
-        ax.set_xlabel('Position Size (%)')
-        ax.set_ylabel('Frequency')
-        
-        # Add statistics annotations
-        props = dict(boxstyle='round', facecolor='white', alpha=0.7)
-        textstr = '\n'.join((
-            f'Mean: {np.mean(all_weights)*100:.2f}%',
-            f'Median: {np.median(all_weights)*100:.2f}%',
-            f'Min: {np.min(all_weights)*100:.2f}%',
-            f'Max: {np.max(all_weights)*100:.2f}%'
-        ))
-        ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=9,
-               verticalalignment='top', bbox=props)
+        # Add histogram
+        fig.add_trace(
+            go.Histogram(
+                x=all_weights,
+                nbinsx=50,
+                opacity=0.7,
+                name='Position Size',
+                marker_color='#0066CC'
+            ),
+            row=row, col=col
+        )
         
         # Add vertical lines for mean and median
-        ax.axvline(np.mean(all_weights) * 100, color='red', linestyle='-', linewidth=1, label='Mean')
-        ax.axvline(np.median(all_weights) * 100, color='green', linestyle='--', linewidth=1, label='Median')
-        ax.legend()
+        fig.add_trace(
+            go.Scatter(
+                x=[mean_weight, mean_weight],
+                y=[0, 1],
+                mode='lines',
+                name=f'Mean: {mean_weight:.2f}%',
+                line=dict(color='red', width=2)
+            ),
+            row=row, col=col
+        )
+        
+        fig.add_trace(
+            go.Scatter(
+                x=[median_weight, median_weight],
+                y=[0, 1],
+                mode='lines',
+                name=f'Median: {median_weight:.2f}%',
+                line=dict(color='green', width=2, dash='dash')
+            ),
+            row=row, col=col
+        )
+        
+        # Add statistics annotation
+        stats_text = (
+            f'Mean: {mean_weight:.2f}%<br>'
+            f'Median: {median_weight:.2f}%<br>'
+            f'Min: {min_weight:.2f}%<br>'
+            f'Max: {max_weight:.2f}%'
+        )
+        
+        fig.add_annotation(
+            x=0.05,
+            y=0.95,
+            xref="x domain",
+            yref="y domain",
+            text=stats_text,
+            showarrow=False,
+            font=dict(size=12),
+            bgcolor="white",
+            bordercolor="#c7c7c7",
+            borderwidth=1,
+            borderpad=4,
+            align="left",
+            row=row, col=col
+        )
+        
+        # Format axes
+        fig.update_xaxes(
+            title_text='Position Size (%)',
+            row=row, col=col
+        )
+        
+        fig.update_yaxes(
+            title_text='Frequency',
+            row=row, col=col
+        )
+        
+        # Update y-axis range after plotting
+        fig.update_yaxes(
+            autorange=True,
+            row=row, col=col
+        )
     
-    def _plot_major_trades(self, ax, weight_cols):
-        """Plot major trades entry/exit on performance chart."""
+    def _add_major_trades(self, fig, weight_cols, row=1, col=1):
+        """Add major trades entry/exit on performance chart to the figure."""
         # Plot cumulative return
-        self.results_df['cumulative_return'].mul(100).plot(ax=ax, color='#0066CC', linewidth=1.5)
+        fig.add_trace(
+            go.Scatter(
+                x=self.results_df.index,
+                y=self.results_df['cumulative_return'] * 100,
+                mode='lines',
+                name='Strategy',
+                line=dict(color='#0066CC', width=2)
+            ),
+            row=row, col=col
+        )
         
         # Identify significant position changes
         # Look for large changes in any position
@@ -738,7 +1071,12 @@ class BacktestVisualizer:
         large_changes = position_changes.max(axis=1).nlargest(10)
         
         # For each large change, identify which asset had the largest change
-        significant_trades = []
+        buy_dates = []
+        buy_assets = []
+        buy_returns = []
+        sell_dates = []
+        sell_assets = []
+        sell_returns = []
         
         for date in large_changes.index:
             changes = position_changes.loc[date]
@@ -751,43 +1089,62 @@ class BacktestVisualizer:
             # Get cumulative return at this point
             cum_ret = self.results_df['cumulative_return'].loc[date] * 100
             
-            significant_trades.append((date, asset_name, direction, cum_ret))
+            if direction == 'Buy':
+                buy_dates.append(date)
+                buy_assets.append(asset_name)
+                buy_returns.append(cum_ret)
+            else:
+                sell_dates.append(date)
+                sell_assets.append(asset_name)
+                sell_returns.append(cum_ret)
         
-        # Plot markers for significant trades
-        for date, asset, direction, cum_ret in significant_trades:
-            color = 'green' if direction == 'Buy' else 'red'
-            marker = '^' if direction == 'Buy' else 'v'
-            
-            ax.scatter(date, cum_ret, color=color, marker=marker, s=100, zorder=5)
-            ax.annotate(f'{direction} {asset}', 
-                       xy=(date, cum_ret),
-                       xytext=(10, 10 if direction == 'Buy' else -15), 
-                       textcoords='offset points',
-                       arrowprops=dict(arrowstyle='->', color='black'),
-                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7))
+        # Add buy markers
+        if buy_dates:
+            fig.add_trace(
+                go.Scatter(
+                    x=buy_dates,
+                    y=buy_returns,
+                    mode='markers',
+                    name='Buy',
+                    marker=dict(
+                        symbol='triangle-up',
+                        size=15,
+                        color='green',
+                        line=dict(color='black', width=1)
+                    ),
+                    text=[f'Buy {asset}' for asset in buy_assets],
+                    hovertemplate='%{text}<br>Date: %{x}<br>Return: %{y:.2f}%'
+                ),
+                row=row, col=col
+            )
         
-        # Format the axis
-        ax.set_title('Cumulative Return with Major Trades', fontsize=12)
-        ax.set_ylabel('Return (%)')
+        # Add sell markers
+        if sell_dates:
+            fig.add_trace(
+                go.Scatter(
+                    x=sell_dates,
+                    y=sell_returns,
+                    mode='markers',
+                    name='Sell',
+                    marker=dict(
+                        symbol='triangle-down',
+                        size=15,
+                        color='red',
+                        line=dict(color='black', width=1)
+                    ),
+                    text=[f'Sell {asset}' for asset in sell_assets],
+                    hovertemplate='%{text}<br>Date: %{x}<br>Return: %{y:.2f}%'
+                ),
+                row=row, col=col
+            )
         
-        # Format x-axis with dates
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
-        
-        # Format y-axis as percentage
-        ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'{y:.0f}%'))
-        
-        # Add grid
-        ax.grid(True, alpha=0.3)
-        
-        # Add legend for trade markers
-        from matplotlib.lines import Line2D
-        legend_elements = [
-            Line2D([0], [0], marker='^', color='w', markerfacecolor='green', markersize=10, label='Buy'),
-            Line2D([0], [0], marker='v', color='w', markerfacecolor='red', markersize=10, label='Sell')
-        ]
-        ax.legend(handles=legend_elements, loc='upper left')
+        # Format axes
+        fig.update_yaxes(
+            title_text='Return (%)',
+            gridcolor='rgba(0,0,0,0.1)',
+            zerolinecolor='black',
+            row=row, col=col
+        )
     
     def save_all_visualizations(self, output_dir):
         """
@@ -809,23 +1166,39 @@ class BacktestVisualizer:
         
         # Performance dashboard
         perf_path = os.path.join(output_dir, f'performance_dashboard_{timestamp}.png')
-        self.create_performance_dashboard(save_path=perf_path)
+        self.create_performance_dashboard(save_path=perf_path, show=False)
         saved_paths.append(perf_path)
         
         # Position analysis
         pos_path = os.path.join(output_dir, f'position_analysis_{timestamp}.png')
-        self.create_position_analysis(save_path=pos_path)
+        self.create_position_analysis(save_path=pos_path, show=False)
         saved_paths.append(pos_path)
         
         # Risk analysis
         risk_path = os.path.join(output_dir, f'risk_analysis_{timestamp}.png')
-        self.create_risk_analysis(save_path=risk_path)
+        self.create_risk_analysis(save_path=risk_path, show=False)
         saved_paths.append(risk_path)
         
         # Trade analysis
         trade_path = os.path.join(output_dir, f'trade_analysis_{timestamp}.png')
-        self.create_trade_analysis(save_path=trade_path)
+        self.create_trade_analysis(save_path=trade_path, show=False)
         saved_paths.append(trade_path)
+        
+        # Also save interactive HTML versions
+        for path in saved_paths:
+            html_path = path.replace('.png', '.html')
+            if 'performance' in path:
+                fig = self.create_performance_dashboard(show=False)
+            elif 'position' in path:
+                fig = self.create_position_analysis(show=False)
+            elif 'risk' in path:
+                fig = self.create_risk_analysis(show=False)
+            elif 'trade' in path:
+                fig = self.create_trade_analysis(show=False)
+            
+            # Save as HTML
+            fig.write_html(html_path)
+            saved_paths.append(html_path)
         
         logger.info(f"All visualizations saved to {output_dir}")
         return saved_paths

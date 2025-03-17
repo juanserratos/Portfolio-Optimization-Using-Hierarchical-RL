@@ -1,10 +1,13 @@
 """
-Updates to the backtest engine with simplified visualization options.
+Updates to the backtest engine with enhanced Plotly visualizations.
 """
 import torch
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+import plotly.io as pio
 import os
 import logging
 from tqdm import tqdm
@@ -16,10 +19,13 @@ from evaluation.portfolio_analytics import PortfolioAnalytics
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Set default plotly template
+pio.templates.default = "plotly_white"
+
 class BacktestEngine:
     """
     Enhanced engine for backtesting trading strategies with advanced visualizations
-    and portfolio analytics.
+    and portfolio analytics using Plotly.
     """
     
     def __init__(self, env, model, device=None):
@@ -261,7 +267,7 @@ class BacktestEngine:
             show (bool): Whether to display the visualizations
             
         Returns:
-            dict: Dictionary of matplotlib figures
+            dict: Dictionary of plotly figures
         """
         if not hasattr(self, 'visualizer') or self.visualizer is None:
             if not self.portfolio_values:
@@ -273,11 +279,15 @@ class BacktestEngine:
         
         # Generate only performance dashboard (cumulative returns, drawdowns, etc.)
         figures['performance'] = self.visualizer.create_performance_dashboard(
-            show_benchmark=hasattr(self.env, 'benchmark_returns') and self.env.benchmark_returns is not None
+            show_benchmark=hasattr(self.env, 'benchmark_returns') and self.env.benchmark_returns is not None,
+            show=False  # Don't show yet
         )
         
         # Generate risk analysis
-        figures['risk'] = self.visualizer.create_risk_analysis()
+        figures['risk'] = self.visualizer.create_risk_analysis(
+            save_path=None,  # Don't save yet
+            show=False       # Don't show yet
+        )
         
         # Save figures if output directory provided
         if output_dir:
@@ -285,15 +295,20 @@ class BacktestEngine:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
             for name, fig in figures.items():
-                filepath = os.path.join(output_dir, f'{name}_{timestamp}.png')
-                fig.savefig(filepath, bbox_inches='tight', dpi=150)
-                logger.info(f"Saved {name} visualization to {filepath}")
+                # Save as PNG
+                png_path = os.path.join(output_dir, f'{name}_{timestamp}.png')
+                fig.write_image(png_path, scale=2)  # Higher resolution
+                
+                # Save as interactive HTML
+                html_path = os.path.join(output_dir, f'{name}_{timestamp}.html')
+                fig.write_html(html_path)
+                
+                logger.info(f"Saved {name} visualization to {png_path} and {html_path}")
         
         # Show figures if requested
         if show:
-            for fig in figures.values():
-                plt.figure(fig.number)
-                plt.show()
+            for name, fig in figures.items():
+                fig.show()
         
         return figures
     
@@ -306,7 +321,7 @@ class BacktestEngine:
             show (bool): Whether to display the visualizations
             
         Returns:
-            dict: Dictionary of matplotlib figures
+            dict: Dictionary of plotly figures
         """
         if not hasattr(self, 'analytics') or self.analytics is None:
             if not self.portfolio_values:
@@ -319,12 +334,12 @@ class BacktestEngine:
         # Only keep the most useful visualizations
         # Generate PnL time horizon dashboard
         figures['pnl_horizons'] = self.analytics.create_pnl_time_horizon_dashboard(
-            show_plot=show
+            show=False  # Don't show yet
         )
         
         # Generate return distribution dashboard
         figures['return_distributions'] = self.analytics.create_return_distribution_dashboard(
-            show_plot=show
+            show=False  # Don't show yet
         )
         
         # Save figures if output directory provided
@@ -333,15 +348,30 @@ class BacktestEngine:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
             for name, fig in figures.items():
-                filepath = os.path.join(output_dir, f'{name}_{timestamp}.png')
-                fig.savefig(filepath, bbox_inches='tight', dpi=150)
-                logger.info(f"Saved {name} analytics to {filepath}")
+                # Save as PNG
+                png_path = os.path.join(output_dir, f'{name}_{timestamp}.png')
+                fig.write_image(png_path, scale=2)  # Higher resolution
+                
+                # Save as interactive HTML
+                html_path = os.path.join(output_dir, f'{name}_{timestamp}.html')
+                fig.write_html(html_path)
+                
+                logger.info(f"Saved {name} analytics to {png_path} and {html_path}")
             
-            # Generate and save metrics CSV only (no HTML to avoid formatting issues)
+            # Generate and save metrics table
             metrics_table = self.analytics.create_performance_metrics_table()
             csv_path = os.path.join(output_dir, f'metrics_{timestamp}.csv')
             metrics_table.to_csv(csv_path, index=False)
+            
+            # Save interactive HTML table
+            self.analytics.save_performance_report(os.path.join(output_dir, f'metrics_{timestamp}'))
+            
             logger.info(f"Performance metrics saved to {csv_path}")
+        
+        # Show figures if requested
+        if show:
+            for name, fig in figures.items():
+                fig.show()
         
         return figures
     
@@ -380,6 +410,7 @@ class BacktestEngine:
         
         # Create report filename
         report_path = os.path.join(output_dir, f'performance_report_{timestamp}.md')
+        html_report_path = os.path.join(output_dir, f'performance_report_{timestamp}.html')
         
         # Generate report content
         with open(report_path, 'w') as f:
@@ -453,9 +484,12 @@ class BacktestEngine:
                 
                 for viz_type, viz_name in viz_types.items():
                     viz_path = os.path.join(output_dir, f'{viz_type}_{timestamp}.png')
-                    # Add a link to the image in the report
+                    viz_html_path = os.path.join(output_dir, f'{viz_type}_{timestamp}.html')
+                    
+                    # Add links to both static and interactive versions
                     f.write(f"### {viz_name}\n\n")
                     f.write(f"![{viz_name}]({os.path.basename(viz_path)})\n\n")
+                    f.write(f"[Interactive Version]({os.path.basename(viz_html_path)})\n\n")
             
             # Add portfolio analytics if included
             if include_analytics:
@@ -472,23 +506,68 @@ class BacktestEngine:
                 
                 for analytics_type, analytics_name in analytics_types.items():
                     analytics_path = os.path.join(output_dir, f'{analytics_type}_{timestamp}.png')
-                    # Add a link to the image in the report
+                    analytics_html_path = os.path.join(output_dir, f'{analytics_type}_{timestamp}.html')
+                    
+                    # Add links to both static and interactive versions
                     f.write(f"### {analytics_name}\n\n")
                     f.write(f"![{analytics_name}]({os.path.basename(analytics_path)})\n\n")
+                    f.write(f"[Interactive Version]({os.path.basename(analytics_html_path)})\n\n")
         
-        logger.info(f"Performance report created at {report_path}")
+        # Also create an HTML version of the report
+        try:
+            import markdown
+            with open(report_path, 'r') as f:
+                md_content = f.read()
+                
+            html_content = markdown.markdown(md_content, extensions=['tables'])
+            
+            # Add HTML header and styling
+            full_html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <title>Trading Strategy Performance Report</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; line-height: 1.6; max-width: 1200px; margin: 0 auto; padding: 20px; }}
+                    h1, h2, h3 {{ color: #0066CC; }}
+                    table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
+                    th, td {{ padding: 8px; text-align: left; border: 1px solid #ddd; }}
+                    th {{ background-color: #0066CC; color: white; }}
+                    tr:nth-child(even) {{ background-color: #f9f9f9; }}
+                    img {{ max-width: 100%; height: auto; border: 1px solid #ddd; }}
+                    .metrics {{ display: flex; flex-wrap: wrap; }}
+                    .metric-group {{ flex: 1; min-width: 300px; margin-right: 20px; }}
+                    a {{ color: #0066CC; text-decoration: none; }}
+                    a:hover {{ text-decoration: underline; }}
+                </style>
+            </head>
+            <body>
+                {html_content}
+            </body>
+            </html>
+            """
+            
+            with open(html_report_path, 'w') as f:
+                f.write(full_html)
+                
+        except ImportError:
+            logger.warning("Markdown package not available. HTML report not generated.")
+        
+        logger.info(f"Performance report created at {report_path} and {html_report_path}")
         return report_path
 
-    def plot_results(self, benchmark_returns=None, figsize=(12, 8)):
+    def plot_results(self, benchmark_returns=None, figsize=(800, 600)):
         """
         Plot backtest results (legacy method for compatibility).
         
         Args:
             benchmark_returns (list): List of benchmark returns for comparison
-            figsize (tuple): Figure size
+            figsize (tuple): Figure size (width, height) in pixels
             
         Returns:
-            tuple: Matplotlib figures
+            tuple: Plotly figures
         """
         logger.info("Using legacy plot_results method. Consider using generate_visualizations() for enhanced visuals.")
         
@@ -500,36 +579,83 @@ class BacktestEngine:
         cumulative_returns = np.array(self.portfolio_values) / self.portfolio_values[0] - 1
         
         # Create figure for portfolio performance
-        fig1, axes1 = plt.subplots(2, 1, figsize=figsize, gridspec_kw={'height_ratios': [3, 1]})
+        fig1 = make_subplots(
+            rows=2, cols=1, 
+            row_heights=[0.7, 0.3],
+            vertical_spacing=0.12,
+            subplot_titles=("Cumulative Returns", "Drawdowns")
+        )
         
         # Plot cumulative returns
-        axes1[0].plot(cumulative_returns, label='Strategy')
+        fig1.add_trace(
+            go.Scatter(
+                y=cumulative_returns * 100,
+                mode='lines',
+                name='Strategy',
+                line=dict(color='#0066CC', width=2)
+            ),
+            row=1, col=1
+        )
         
         # Plot benchmark if provided
         if benchmark_returns is not None:
             benchmark_cumulative = np.cumprod(1 + np.array(benchmark_returns)) - 1
-            axes1[0].plot(benchmark_cumulative, label='Benchmark')
-        
-        axes1[0].set_title('Cumulative Returns')
-        axes1[0].set_ylabel('Return (%)')
-        axes1[0].legend()
-        axes1[0].grid(True)
+            fig1.add_trace(
+                go.Scatter(
+                    y=benchmark_cumulative * 100,
+                    mode='lines',
+                    name='Benchmark',
+                    line=dict(color='#999999', width=1.5, dash='dash')
+                ),
+                row=1, col=1
+            )
         
         # Plot drawdowns
         running_max = np.maximum.accumulate(cumulative_returns)
         drawdowns = (cumulative_returns - running_max) / (1 + running_max)
-        axes1[1].fill_between(range(len(drawdowns)), 0, drawdowns, color='r', alpha=0.3)
-        axes1[1].set_title('Drawdowns')
-        axes1[1].set_ylabel('Drawdown (%)')
-        axes1[1].set_xlabel('Trading Days')
-        axes1[1].grid(True)
+        fig1.add_trace(
+            go.Scatter(
+                y=drawdowns * 100,
+                mode='lines',
+                name='Drawdown',
+                line=dict(color='#CC0000', width=1.5),
+                fill='tozeroy',
+                fillcolor='rgba(204,0,0,0.3)'
+            ),
+            row=2, col=1
+        )
         
-        fig1.tight_layout()
+        # Update layout
+        fig1.update_layout(
+            title={
+                'text': 'Strategy Performance',
+                'y': 0.95,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+                'font': {'size': 24}
+            },
+            height=figsize[1],
+            width=figsize[0],
+            template='plotly_white',
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            )
+        )
+        
+        # Format y-axes
+        fig1.update_yaxes(title_text='Return (%)', row=1, col=1)
+        fig1.update_yaxes(title_text='Drawdown (%)', row=2, col=1, autorange="reversed")
+        
+        # Format x-axes
+        fig1.update_xaxes(title_text='Trading Days', row=2, col=1)
         
         # Create figure for position allocation
-        fig2, ax2 = plt.subplots(figsize=figsize)
-        
-        # Convert positions to array for plotting
         positions_array = np.array(self.positions)
         
         # Get asset names from environment
@@ -538,16 +664,41 @@ class BacktestEngine:
         else:
             asset_names = [f'Asset {i+1}' for i in range(positions_array.shape[1])]
         
+        fig2 = go.Figure()
+        
         # Plot positions over time
         for i, asset in enumerate(asset_names):
-            ax2.plot(positions_array[:, i], label=asset)
+            fig2.add_trace(
+                go.Scatter(
+                    y=positions_array[:, i] * 100,
+                    mode='lines',
+                    name=asset
+                )
+            )
         
-        ax2.set_title('Portfolio Allocation Over Time')
-        ax2.set_ylabel('Weight')
-        ax2.set_xlabel('Trading Days')
-        ax2.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-        ax2.grid(True)
-        
-        fig2.tight_layout()
+        # Update layout
+        fig2.update_layout(
+            title={
+                'text': 'Portfolio Allocation Over Time',
+                'y': 0.95,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+                'font': {'size': 24}
+            },
+            height=figsize[1],
+            width=figsize[0],
+            template='plotly_white',
+            yaxis_title='Weight (%)',
+            xaxis_title='Trading Days',
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            )
+        )
         
         return fig1, fig2
