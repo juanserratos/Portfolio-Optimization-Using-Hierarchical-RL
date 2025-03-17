@@ -1,0 +1,26 @@
+Performance Summary
+===================
+
+Return Metrics:
+- Total Return: 101.63%
+- Annualized Return: 43.96%
+- Volatility: 28.88%
+
+Risk-Adjusted Metrics:
+- Sharpe Ratio: 1.41
+- Sortino Ratio: 2.28
+- Calmar Ratio: 1.57
+- Omega Ratio: 1.26
+
+Drawdown Metrics:
+- Maximum Drawdown: 25.90%
+
+Win/Loss Metrics:
+- Win Rate: 54.64%
+- Gain/Loss Ratio: 1.05
+- VaR (95%): -2.78%
+- CVaR (95%): -3.70%
+
+Distribution Metrics:
+- Skewness: 0.14
+- Kurtosis: 0.83
